@@ -1,0 +1,81 @@
+logging: True
+verbose: 1
+debug: False
+logdir: "./AgentOccam-Trajectories-all-online"
+logname: "AgentOccam-all-online"
+max_steps: 25
+agent:
+  type: "AgentOccam"
+  others:
+    max_steps: 25
+    logname: "AgentOccam-all-online"
+    logging: True
+    verbose: 1
+    debug: False
+  actor:
+    debug: 0
+    verbose: 1
+    number: 1
+    model: "gpt-4o"
+    documented_interaction_elements: ["url", "plan", "reason", "observation summary",
+      "retained element ids", "observation highlight"]
+    online_interaction_elements: ["tabs"]
+    input: ["step", "objective", "previous plans", "interaction history", "current\
+        \ observation", "url", "tabs", "retrieved memory"]
+    interaction_history:
+      verbose: True
+      type: ["text"]
+      step_num: 3
+    current_observation:
+      type: ["text"]
+    retrieved_memory:
+      type: ["text"]
+    output: ["interaction history summary", "observation description", "reason", "action",
+      "observation highlight"]
+    planning_command: ["branch", "prune"]
+    navigation_command: ["click", "type", "stop", "note", "go_back"]
+    play: ["step", "objective", "previous plans", "observation description", "reason",
+      "action"]
+    trash: ["objective", "step", "url", "instruction", "online input", "response"]
+  critic:
+    mode: False
+    debug: 0
+    verbose: 1
+    model: "gpt-4o"
+    documented_interaction_elements: []
+    online_interaction_elements: ["tabs"]
+    character: "normal"
+    input: ["objective", "previous plans", "interaction history", "step", "current\
+        \ observation", "url", "tabs"]
+    interaction_history:
+      verbose: True
+      type: ["text"]
+      step_num: "all"
+    current_observation:
+      type: ["text"]
+    output: ["observation description", "mistakes"]
+    trash: ["instruction", "online input", "response"]
+  judge:
+    mode: True
+    debug: 0
+    verbose: 1
+    model: "gpt-4o"
+    documented_interaction_elements: []
+    online_interaction_elements: ["tabs"]
+    strict: False
+    input: ["objective", "previous plans", "interaction history", "step", "current\
+        \ observation", "url", "tabs", "action choices"]
+    interaction_history:
+      verbose: True
+      type: ["text"]
+      step_num: "all"
+    current_observation:
+      type: ["text"]
+    output: ["plan progress assessment", "action assessment", "action selection"]
+    trash: ["instruction", "online input", "response"]
+env:
+  fullpage: True
+  prune: True
+  max_browser_rows: 500
+  headless: True
+  task_ids: [265, 424, 554, 557, 563, 672, 683, 684, 741, 759]

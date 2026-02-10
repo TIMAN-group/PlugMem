@@ -1,0 +1,12 @@
+I will give you several memory of history chats between you and a user. Extract all the useful information relevant to the question step by step: First analyze the relationship between each memory and the question, then obtain the useful information.
+Output format:
+---
+### Reasoning
+(process of extract information)
+### Information
+(The useful information you extract)
+---
+Input:
+History chats: {episodic_memory_semantic}
+Current Date: {time}
+Question: {observation}

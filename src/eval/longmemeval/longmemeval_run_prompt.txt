@@ -1,0 +1,1 @@
+I will give you several information extracted from history chats between you and a user. Please answer the question based on the relevant facts. Answer the question step by step: first extract all the relevant information, and then reason over the information to get the answer.\n\n\Information:\n\n{information}\n\nCurrent Date: {time}\nQuestion: {question}\nAnswer (step by step):
