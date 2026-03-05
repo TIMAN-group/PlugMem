@@ -3,7 +3,9 @@
 
 **PlugMem** is a **plug-and-play long-term memory system for LLM agents**. Instead of storing and retrieving raw interaction histories, PlugMem organizes experience into **compact, reusable knowledge units**, allowing agents to recall what matters with minimal context overhead.
 
-The module is **task-agnostic by design** and can be integrated into existing agent pipelines with minimal effort, serving as a general memory backbone for diverse environments such as dialogue agents, knowledge-intensive QA, and web automation.
+The module is **task-agnostic by design** and can be integrated into existing agent pipelines with minimal effort, serving as a general memory backbone for diverse environments such as dialogue agents, knowledge-intensive QA, and web automation. 
+
+For more details, please see the full paper: [https://arxiv.org/abs/2603.03296](https://arxiv.org/abs/2603.03296)
 
 ![](assets/plugmem_pipeline.png)
 
@@ -111,4 +113,17 @@ mkdir -p "$DIR_PATH/episodic_memory" \
 - We release human demonstrations used for WebArena (Under License CC BY 4.0).
 - Data available in Google Drive: https://drive.google.com/drive/folders/15feC6xYsONJhJAb2n1kPjGrjSt0weHXi?usp=sharing
 
+## Citation
+If you use our code or data, or otherwise found our work helpful, please cite our paper:
 
+```
+@misc{yang2026plugmemtaskagnosticpluginmemory,
+      title={PlugMem: A Task-Agnostic Plugin Memory Module for LLM Agents}, 
+      author={Ke Yang and Zixi Chen and Xuan He and Jize Jiang and Michel Galley and Chenglong Wang and Jianfeng Gao and Jiawei Han and ChengXiang Zhai},
+      year={2026},
+      eprint={2603.03296},
+      archivePrefix={arXiv},
+      primaryClass={cs.CL},
+      url={https://arxiv.org/abs/2603.03296}, 
+}
+```
