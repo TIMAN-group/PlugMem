@@ -180,21 +180,21 @@ class GetModePrompt(PromptBase):
             "You are a helpful assistant."
         )
         user_template = (
-            'You are given a task type that the agent is pursuing and the observation from the task\n'
-            'Please analyze the task type and observation to determine the type of memory required to complete it effectively. There are three possible memory types:\n'
-            'Episodic Memory: This is needed if the task requires you to answer questions about specific events, such as recalling what happened during a certain situation or interaction.\n'
-            'Semantic Memory: This is needed if the task requires you to recall objective information, such as details about the user (preferences, information) or general knowledge to make recommendations or decisions.\n'
-            'Procedural Memory: This is needed if the task is completing a subgoal under an interactive environment (etc. website) that agent need to perform a workflow.\n'
-            'First analyze that task and observation and decide which only one memory type needed\n'
-            'Output Fomat:\n'
-            '### Reasoning\n'
-            '[Your analyze of which memory is needed depending on task and observation]\n'
-            '### Memory Type\n'
-            '[Your final deciosn, episodic_memory or semantic_memory or procedural_memory]\n'
-            '---\n'
-            'Input:\n'
-            'Task type: {task_type}\n'
-            'Observation: {observation}'
+            "You are given a task description that the agent is pursuing and the observation from the task\n"
+            "Please analyze the task description and observation to determine the type of memory required to complete it effectively. There are three possible memory types:\n"
+            "Episodic Memory: This is needed if the task requires you to answer questions based on events. For example, answering user's question depending on historical conversation.\n"
+            "Semantic Memory: This is needed if the task requires you to recall objective information. For example, answer the question based on objective knowledge or information.\n"
+            "Procedural Memory: This is needed if the task is completing a subgoal under an interactive environment that agent need to perform a workflow. For example, completing an instruction in web navigation tasks.\n"
+            "First analyze that task and observation and decide which only one memory type needed.\n"
+            "When there is a conflict, prioritize the information in the Task Description when making decisions.\n"
+            "Output Format:\n"
+            "### Reasoning\n"
+            "[Your analyze of which memory is needed depending on task and observation]\n"
+            "### Memory Type\n"
+            "## [Your final decision, episodic_memory or semantic_memory or procedural_memory]\n"
+            "Input:\n"
+            "Task Description: {task_type}\n"
+            "Observation: {observation}"
         )
         return [
             ChatMessage("system", self.format_text(system_template, variables)),
