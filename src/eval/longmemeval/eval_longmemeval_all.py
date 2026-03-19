@@ -12,7 +12,7 @@ sys.path.append(parent_dir)
 from memory_structuring.memory import Memory
 from memory_retrieving.memory_graph import MemoryGraph
 from memory_retrieving.value_longmemeval import TagEqual, TagRelevant, SemanticEqual, SemanticRelevant, SubgoalEqual, SubgoalRelevant, ProceduralEqual, ProceduralRelevant
-from utils import call_qwen, call_gpt, save_episodic_longmem_ver
+from utils import call_qwen, call_gpt
 
 
 def load_run_prompt() -> str:
@@ -51,10 +51,8 @@ def _build_memory_from_session(session, time):
 
 worker_count = int(os.getenv("LONGMEMEVAL_SESSION_WORKERS", max(os.cpu_count() or 1, 1)))
 cnt = 0
-#for _ in range(25):
-vis_question_id = []
-n_prep = [] + list(range(243,253))
-for n in n_prep:
+
+for n in range(500):
     print(n)
     test = data[n]
     question_id = test["question_id"]
@@ -70,7 +68,6 @@ for n in n_prep:
     )#1
     question = test["question"]
     sessions = test["haystack_sessions"]
-    sessions = sessions[:1]
     times = test['haystack_dates']
     task_type = "assistant for user"
     print(f"Loading test {question_id} with {len(sessions)} sessions using {worker_count} workers")
@@ -91,10 +88,8 @@ for n in n_prep:
     messages, memory_map, sel_type = mg.retrieve_memory(goal=goal, observation=question, time=f"Date: {test['question_date']}", task_type=task_type)#6
     memory_str = memory_map[sel_type]
     response = call_gpt(messages=messages, model_id="gpt-4o-mini")#7
-    pattern = r'### Information\n(.*)'
-    match = re.search(pattern, response, re.S)#8
-    information = match.group(1).strip() if match else "<information>"#9
-    with open("../../../data_longmemeval/information.jsonl", "a",) as input:
+    information = response
+    with open("../../../data_longmemeval/reasoning.jsonl", "a",) as input:
         _json = {
             "question_id": question_id,
             "messages": messages,
@@ -113,27 +108,9 @@ for n in n_prep:
         ],
         model_id="gpt-4o-mini"
     )
-    with open("../../../data_longmemeval/hh.jsonl", "a",) as input:
+    with open("../../../data_longmemeval/hypothesis.jsonl", "a",) as input:
         _json = {
             "question_id": question_id,
             "hypothesis": response
-        }
-        input.write(json.dumps(_json) + "\n")
-    prompt_run_without_reasoning = run_prompt_template.format(
-        information=memory_str,
-        question=question,
-        time=test['question_date']
-    )
-    response_without_reasoning = call_gpt(
-        messages=[
-            {"role": "system", "content": "You are a helpful assistant"},
-            {"role": "user", "content": prompt_run_without_reasoning}
-        ],
-        model_id="gpt-4o-mini"
-    )
-    with open("../../../data_longmemeval/hh_without_reasoning.jsonl", "a",) as input:
-        _json = {
-            "question_id": question_id,
-            "hypothesis": response_without_reasoning
         }
         input.write(json.dumps(_json) + "\n")

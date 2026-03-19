@@ -47,17 +47,9 @@ def _build_memory_from_session(turn):
 
 worker_count = int(os.getenv("LONGMEMEVAL_SESSION_WORKERS", max(os.cpu_count() or 1, 1)))
 cnt = 0
-#for _ in range(25):
-vis_question_id = []
 for n in range(500):
     test = data[n]
     question_id = test["question_id"]
-    if not question_id in test_set:
-        continue
-    cnt += 1
-    if cnt<= 81:
-        continue
-    print(n)
     question = test["question"]
     sessions = test["haystack_sessions"]
     times = test['haystack_dates']
@@ -80,7 +72,7 @@ for n in range(500):
     for index, memory in enumerate(memories):
         values.append((get_similarity(memory['embedding'], embedding), index))
     values.sort(reverse=True, key=lambda x: x[0])
-    values = values[:5]
+    values = values[:10]
     memory_str = ""
     for _, index in values:
         memory_str += f"{memories[index]['content']} Date: {memories[index]['time']}"
@@ -90,9 +82,14 @@ for n in range(500):
         observation = question
     )
     response = call_gpt(prompt=prompt_reason, model_id="gpt-4o-mini")#7
-    pattern = r'### Information\n(.*)'
-    match = re.search(pattern, response, re.S)#8
-    information = match.group(1).strip() if match else "<information>"#9
+    information = response
+    with open("../../../data_longmemeval/reasoning_without_structuring.jsonl", "a",) as input:
+        _json = {
+            "question_id": question_id,
+            "prompt": prompt_reason,
+            "response": response
+        }
+        input.write(json.dumps(_json) + "\n")
     prompt_run = run_prompt_template.format(
         information=information,
         question=question,
@@ -105,7 +102,7 @@ for n in range(500):
         ],
         model_id="gpt-4o-mini"
     )
-    with open("../../../data_longmemeval/hh_without_structuring.jsonl", "a",) as input:
+    with open("../../../data_longmemeval/hypothesis_without_structuring.jsonl", "a",) as input:
         _json = {
             "question_id": question_id,
             "hypothesis": response

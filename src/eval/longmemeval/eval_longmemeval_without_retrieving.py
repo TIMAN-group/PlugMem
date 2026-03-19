@@ -98,9 +98,14 @@ for n in range(500):
         observation = question
     )
     response = call_gpt(prompt=prompt_reason, model_id="gpt-4o-mini")#7
-    pattern = r'### Information\n(.*)'
-    match = re.search(pattern, response, re.S)#8
-    information = match.group(1).strip() if match else "<information>"#9
+    information = response
+    with open("../../../data_longmemeval/reasoning_without_retrieving.jsonl", "a",) as input:
+        _json = {
+            "question_id": question_id,
+            "prompt": prompt_reason,
+            "response": response
+        }
+        input.write(json.dumps(_json) + "\n")
     prompt_run = run_prompt_template.format(
         information=information,
         question=question,
@@ -113,7 +118,7 @@ for n in range(500):
         ],
         model_id="gpt-4o-mini"
     )
-    with open("../../../data_longmemeval/hh_without_retrieving.jsonl", "a",) as input:
+    with open("../../../data_longmemeval/hypothesis_without_retrieving.jsonl", "a",) as input:
         _json = {
             "question_id": question_id,
             "hypothesis": response

@@ -55,10 +55,7 @@ def _build_memory_from_session(session, time):
 
 worker_count = int(os.getenv("LONGMEMEVAL_SESSION_WORKERS", max(os.cpu_count() or 1, 1)))
 cnt = 0
-#for _ in range(25):
-vis_question_id = []
-n_prep = [] + list(range(236,243)) + list(range(366,376)) + list(range(444,454))
-for n in n_prep:
+for n in range(500):
     print(n)
     test = data[n]
     question_id = test["question_id"]
@@ -74,7 +71,6 @@ for n in n_prep:
     )#1
     question = test["question"]
     sessions = test["haystack_sessions"]
-    #sessions = sessions[:1]
     times = test['haystack_dates']
     task_type = "assistant for user"
     print(f"Loading test {question_id} with {len(sessions)} sessions using {worker_count} workers")
@@ -88,12 +84,6 @@ for n in n_prep:
     print("MG OK")
     print("Finish Loading Session")
     goal = "Answer user's question"
-    with open("../../../data_longmemeval/retrieve.jsonl", "a",) as input:
-        _json = {
-            "question_id": question_id,
-            "question": question
-        }
-        input.write(json.dumps(_json) + "\n")
     messages, memory_str = mg.get_reason_prompt(goal=goal, observation=question, time=f"Date: {test['question_date']}", task_type=task_type)#6
     prompt_run_without_reasoning = run_prompt_template.format(
         information=memory_str,
@@ -107,7 +97,7 @@ for n in n_prep:
         ],
         model_id="gpt-4o-mini"
     )
-    with open("../../../data_longmemeval/hh_without_reasoning.jsonl", "a",) as input:
+    with open("../../../data_longmemeval/hypothesis_without_reasoning.jsonl", "a",) as input:
         _json = {
             "question_id": question_id,
             "hypothesis": response_without_reasoning
