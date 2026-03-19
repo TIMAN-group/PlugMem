@@ -10,34 +10,8 @@ class DefaultEpisodicPrompt(PromptBase):
         system_template = (
             "You are an assistant to extract information from memory and answer the user's question."
         )
-        # user_template = (
-        #     'I will give you several memory of history chats between you and a user. Extract all the useful information relevant to the question step by step: First analyze the relationship between each memory and the question, then obtain the useful information.\n'
-        #     'Output format:\n'
-        #     '---\n'
-        #     '### Reasoning\n'
-        #     '(process of extract information)\n'
-        #     '### Information\n'
-        #     '(The useful information you extract)\n'
-        #     '---\n'
-        #     'Input:\n'
-        #     'History chats: {episodic_memory_semantic}\n'
-        #     'Current Date: {time}\n'
-        #     'Question: {observation}'
-        # )
         user_template = (
-            'I will give you several memory items. Extract all the useful information relevant to the question step by step: First analyze the relationship between each memory and the question, then obtain the useful information.\n'
-            # 'If no useful information found, just return "null".\n'
-            'If no useful information is found, just concatenate all the facts as the output, like: Fact 0: <fact> \\nFact 1: <fact> \\n...)\n'
-            'Output format:\n'
-            '---\n'
-            '### Reasoning\n'
-            '(process of extract information, if the token bugdet is limited, you can return a very brief reasoning process or even skip this process with only a placeholder <SKIPPED>)\n'
-            '### Information\n'
-            '(The useful information you extract)\n'
-            '---\n'
-            'Input:\n'
-            'Possible Relevant Items: {episodic_memory}\n'
-            'Question: {observation}'
+            'I will give you information of history chats between you and a user. Please answer the question based on the information. Answer the question step by step: first extract all the relevant information, and then reason over the memory to get the answer.\n\n\Information:\n\n{information}\n\nCurrent Date: {time}\nQuestion: {question}\nAnswer (step by step):'
         )
         return [
             ChatMessage("system", self.format_text(system_template, variables)),

@@ -8,20 +8,6 @@ import re
 class EpisdoicNode:
     def __init__(self, episodic_id: int):
         self.episodic_id = episodic_id
-
-    def get_episodic_memory_semantic(self):
-        DIR_PATH = os.environ.get("DIR_PATH", None)
-        with open(DIR_PATH+f"/episodic_memory/episodic_memory_{self.episodic_id}.json","r",) as input:
-            _json = json.load(input)
-            episodic_memory = _json['observation'] + _json['time']
-        return episodic_memory
-    
-    def get_episodic_memory_procedural(self):
-        DIR_PATH = os.environ.get("DIR_PATH", None)
-        with open(DIR_PATH+f"/episodic_memory/episodic_memory_{self.episodic_id}.json","r",) as input:
-            _json = json.load(input)
-            episodic_memory = _json['action'] + _json['time']
-        return episodic_memory
     
     def get_episodic_memory(self):
         DIR_PATH = os.environ.get("DIR_PATH", None)
