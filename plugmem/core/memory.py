@@ -5,6 +5,7 @@ from typing import List
 
 from plugmem.clients.embedding import EmbeddingClient, get_similarity
 from plugmem.clients.llm import LLMClient
+from plugmem.clients.llm_router import LLMRouter
 from plugmem.inference.structuring import (
     get_procedural,
     get_reward,
@@ -30,7 +31,11 @@ class Memory:
         time: int = 0,
     ):
         self.time = time
-        self.llm = llm
+        # If an LLMRouter is passed, use its structuring role
+        if isinstance(llm, LLMRouter):
+            self.llm = llm.structuring
+        else:
+            self.llm = llm
         self.embedder = embedder
 
         self.memory: dict = {
