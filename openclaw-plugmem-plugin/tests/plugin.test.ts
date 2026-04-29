@@ -35,7 +35,12 @@ type HookHandler = (...args: unknown[]) => Promise<void> | void;
 
 function activatePlugin(
   defaultGraphId?: string,
-  opts?: { autoRemember?: false | { onSessionReset?: boolean; onCompaction?: boolean; minSteps?: number } },
+  opts?: {
+    autoRemember?:
+      | false
+      | { onSessionReset?: boolean; onCompaction?: boolean; minSteps?: number };
+    sharedReadGraphIds?: string[];
+  },
 ) {
   const tools: Record<string, RegisteredTool> = {};
   const hooks: Record<string, HookHandler[]> = {};
@@ -53,6 +58,7 @@ function activatePlugin(
     baseUrl: "http://localhost:8080",
     apiKey: "key",
     defaultGraphId,
+    sharedReadGraphIds: opts?.sharedReadGraphIds,
     maxRetries: 0,
     autoRemember: opts?.autoRemember,
   });
@@ -245,6 +251,171 @@ describe("OpenClaw plugin", () => {
 
       const text = getText(result);
       expect(text).toContain("PlugMem error (404)");
+    });
+  });
+
+  // ── Shared-read fan-out ──────────────────────────────────────────
+
+  describe("plugmem.recall with sharedReadGraphIds", () => {
+    it("fans out reason across primary + shared graphs", async () => {
+      const { tools } = activatePlugin("agent-1", {
+        sharedReadGraphIds: ["user-facts"],
+      });
+      mockFetch
+        .mockResolvedValueOnce(
+          jsonResponse({
+            mode: "episodic_memory",
+            reasoning: "Last session you deployed to staging.",
+            reasoning_prompt: [],
+          }),
+        )
+        .mockResolvedValueOnce(
+          jsonResponse({
+            mode: "semantic_memory",
+            reasoning: "User prefers blue/green deploys.",
+            reasoning_prompt: [],
+          }),
+        );
+
+      const result = await tools["plugmem.recall"].execute("call-fan-1", {
+        observation: "how should I deploy?",
+      });
+
+      expect(mockFetch).toHaveBeenCalledTimes(2);
+      expect(mockFetch.mock.calls[0][0]).toContain(
+        "/graphs/agent-1/reason",
+      );
+      expect(mockFetch.mock.calls[1][0]).toContain(
+        "/graphs/user-facts/reason",
+      );
+
+      const text = getText(result);
+      expect(text).toContain("[graph:agent-1 | episodic_memory]");
+      expect(text).toContain("Last session you deployed to staging.");
+      expect(text).toContain("[graph:user-facts | semantic_memory]");
+      expect(text).toContain("User prefers blue/green deploys.");
+    });
+
+    it("fans out retrieve when raw=true", async () => {
+      const { tools } = activatePlugin("agent-1", {
+        sharedReadGraphIds: ["user-facts"],
+      });
+      mockFetch
+        .mockResolvedValueOnce(
+          jsonResponse({
+            mode: "semantic_memory",
+            reasoning_prompt: [
+              { role: "user", content: "Facts: staging uses k8s" },
+            ],
+            variables: {},
+          }),
+        )
+        .mockResolvedValueOnce(
+          jsonResponse({
+            mode: "semantic_memory",
+            reasoning_prompt: [
+              { role: "user", content: "Facts: user owns repo X" },
+            ],
+            variables: {},
+          }),
+        );
+
+      const result = await tools["plugmem.recall"].execute("call-fan-2", {
+        observation: "context?",
+        raw: true,
+      });
+
+      expect(mockFetch).toHaveBeenCalledTimes(2);
+      expect(mockFetch.mock.calls[0][0]).toContain(
+        "/graphs/agent-1/retrieve",
+      );
+      expect(mockFetch.mock.calls[1][0]).toContain(
+        "/graphs/user-facts/retrieve",
+      );
+
+      const text = getText(result);
+      expect(text).toContain("[graph:agent-1 | semantic_memory]");
+      expect(text).toContain("staging uses k8s");
+      expect(text).toContain("[graph:user-facts | semantic_memory]");
+      expect(text).toContain("user owns repo X");
+    });
+
+    it("returns partial results when a shared graph fails", async () => {
+      const { tools } = activatePlugin("agent-1", {
+        sharedReadGraphIds: ["missing-graph"],
+      });
+      mockFetch
+        .mockResolvedValueOnce(
+          jsonResponse({
+            mode: "semantic_memory",
+            reasoning: "Primary answer.",
+            reasoning_prompt: [],
+          }),
+        )
+        .mockResolvedValueOnce({
+          ok: false,
+          status: 404,
+          json: () => Promise.resolve({ detail: "Graph not found" }),
+          text: () => Promise.resolve('{"detail":"Graph not found"}'),
+        } as unknown as Response);
+
+      const result = await tools["plugmem.recall"].execute("call-fan-3", {
+        observation: "anything",
+      });
+
+      const text = getText(result);
+      expect(text).toContain("[graph:agent-1 | semantic_memory]");
+      expect(text).toContain("Primary answer.");
+      expect(text).toContain("[graph:missing-graph | error]");
+      expect(text).toContain("PlugMem error (404)");
+    });
+
+    it("dedupes when primary graph also appears in shared list", async () => {
+      const { tools } = activatePlugin("agent-1", {
+        sharedReadGraphIds: ["agent-1", "user-facts"],
+      });
+      mockFetch
+        .mockResolvedValueOnce(
+          jsonResponse({
+            mode: "semantic_memory",
+            reasoning: "A",
+            reasoning_prompt: [],
+          }),
+        )
+        .mockResolvedValueOnce(
+          jsonResponse({
+            mode: "semantic_memory",
+            reasoning: "B",
+            reasoning_prompt: [],
+          }),
+        );
+
+      await tools["plugmem.recall"].execute("call-fan-4", {
+        observation: "x",
+      });
+
+      expect(mockFetch).toHaveBeenCalledTimes(2);
+      expect(mockFetch.mock.calls[0][0]).toContain("/graphs/agent-1/");
+      expect(mockFetch.mock.calls[1][0]).toContain("/graphs/user-facts/");
+    });
+
+    it("preserves single-graph output shape when sharedReadGraphIds is empty", async () => {
+      const { tools } = activatePlugin("agent-1", { sharedReadGraphIds: [] });
+      mockFetch.mockResolvedValueOnce(
+        jsonResponse({
+          mode: "semantic_memory",
+          reasoning: "Solo answer.",
+          reasoning_prompt: [],
+        }),
+      );
+
+      const result = await tools["plugmem.recall"].execute("call-fan-5", {
+        observation: "x",
+      });
+
+      const text = getText(result);
+      // Old format — no [graph:...] prefix.
+      expect(text).toBe("[semantic_memory] Solo answer.");
     });
   });
 

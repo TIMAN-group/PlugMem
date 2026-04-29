@@ -2,7 +2,12 @@ import { Type } from "@sinclair/typebox";
 import { PlugMemClient } from "./client.js";
 import type { PlugMemPluginConfig, ResolvedConfig } from "./config.js";
 import { resolveConfig } from "./config.js";
-import type { PlugMemError, TrajectoryStep } from "./types.js";
+import type {
+  PlugMemError,
+  ReasonResponse,
+  RetrieveResponse,
+  TrajectoryStep,
+} from "./types.js";
 
 // ── OpenClaw SDK type stubs ──────────────────────────────────────────
 // Minimal interfaces matching the OpenClaw plugin-sdk API.
@@ -500,7 +505,11 @@ export function createPlugMemPlugin(config: PlugMemPluginConfig): PluginEntry {
 
         async execute(_id, params) {
           try {
-            const graphId = requireGraphId(params, defaultGraphId);
+            const primaryGraphId = requireGraphId(params, defaultGraphId);
+            const readGraphIds = dedupe([
+              primaryGraphId,
+              ...resolved.sharedReadGraphIds,
+            ]);
             const query = {
               observation: params.observation as string,
               goal: params.goal as string | undefined,
@@ -511,20 +520,39 @@ export function createPlugMemPlugin(config: PlugMemPluginConfig): PluginEntry {
                 | undefined,
             };
 
-            // Raw mode: return the retrieval prompt without LLM synthesis
-            if (params.raw) {
-              const result = await client.retrieve(graphId, query);
-              return textContent(
-                `[${result.mode}] Retrieved memories:\n\n` +
-                  result.reasoning_prompt
-                    .map((m) => `**${m.role}**: ${m.content}`)
-                    .join("\n\n"),
-              );
+            // Single-graph path — preserve exact output shape for callers
+            // that don't configure sharedReadGraphIds.
+            if (readGraphIds.length === 1) {
+              if (params.raw) {
+                const result = await client.retrieve(readGraphIds[0], query);
+                return textContent(
+                  `[${result.mode}] Retrieved memories:\n\n` +
+                    formatRetrievalPrompt(result),
+                );
+              }
+              const result = await client.reason(readGraphIds[0], query);
+              return textContent(`[${result.mode}] ${result.reasoning}`);
             }
 
-            // Default: full reasoning
-            const result = await client.reason(graphId, query);
-            return textContent(`[${result.mode}] ${result.reasoning}`);
+            // Multi-graph fan-out. A failure on any single graph (e.g. a
+            // stale sharedReadGraphIds entry) does not abort the call —
+            // successful graphs still return their memories.
+            if (params.raw) {
+              const settled = await Promise.allSettled(
+                readGraphIds.map((gid) => client.retrieve(gid, query)),
+              );
+              return textContent(
+                formatFanOut(readGraphIds, settled, (r) =>
+                  formatRetrievalPrompt(r),
+                ),
+              );
+            }
+            const settled = await Promise.allSettled(
+              readGraphIds.map((gid) => client.reason(gid, query)),
+            );
+            return textContent(
+              formatFanOut(readGraphIds, settled, (r) => r.reasoning),
+            );
           } catch (err) {
             return errorContent(err);
           }
@@ -571,6 +599,40 @@ function formatStats(stats: Record<string, number>): string {
 
 function truncate(s: string, len: number): string {
   return s.length <= len ? s : s.slice(0, len - 1) + "\u2026";
+}
+
+function dedupe<T>(xs: T[]): T[] {
+  return Array.from(new Set(xs));
+}
+
+function formatRetrievalPrompt(result: RetrieveResponse): string {
+  return result.reasoning_prompt
+    .map((m) => `**${m.role}**: ${m.content}`)
+    .join("\n\n");
+}
+
+function formatFailure(reason: unknown): string {
+  const err = reason as PlugMemError;
+  if (err && typeof err.statusCode === "number") {
+    return `PlugMem error (${err.statusCode}): ${err.message}`;
+  }
+  return `PlugMem error: ${reason instanceof Error ? reason.message : String(reason)}`;
+}
+
+function formatFanOut<T extends RetrieveResponse | ReasonResponse>(
+  graphIds: string[],
+  settled: PromiseSettledResult<T>[],
+  renderBody: (value: T) => string,
+): string {
+  return settled
+    .map((s, i) => {
+      const gid = graphIds[i];
+      if (s.status === "fulfilled") {
+        return `[graph:${gid} | ${s.value.mode}]\n${renderBody(s.value)}`;
+      }
+      return `[graph:${gid} | error]\n${formatFailure(s.reason)}`;
+    })
+    .join("\n\n---\n\n");
 }
 
 // ── Default export for OpenClaw plugin loader ────────────────────────

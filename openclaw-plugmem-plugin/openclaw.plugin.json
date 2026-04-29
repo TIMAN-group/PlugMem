@@ -19,6 +19,12 @@
         "type": "string",
         "description": "Default memory graph ID to use when not specified per-call"
       },
+      "sharedReadGraphIds": {
+        "type": "array",
+        "items": { "type": "string" },
+        "description": "Extra graph IDs always included in recall fan-out (read-only). Typically a user-level semantic graph shared across agents.",
+        "default": []
+      },
       "timeoutMs": {
         "type": "number",
         "description": "Request timeout in milliseconds",

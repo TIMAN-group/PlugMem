@@ -14,6 +14,12 @@ export interface PlugMemPluginConfig {
   apiKey?: string;
   /** Default graph ID used when not specified per-call */
   defaultGraphId?: string;
+  /**
+   * Extra graph IDs that are always included in `plugmem.recall` fan-out.
+   * Typically a user-level semantic graph shared across agents.
+   * Writes (`plugmem.remember`, auto-remember) never target these graphs.
+   */
+  sharedReadGraphIds?: string[];
   /** Request timeout in milliseconds (default: 30000) */
   timeoutMs?: number;
   /** Maximum retry attempts for transient failures (default: 3) */
@@ -37,6 +43,7 @@ export interface ResolvedConfig {
   baseUrl: string;
   apiKey?: string;
   defaultGraphId?: string;
+  sharedReadGraphIds: string[];
   timeoutMs: number;
   maxRetries: number;
   autoRemember: Required<AutoRememberConfig> | false;
@@ -47,6 +54,7 @@ export function resolveConfig(raw: PlugMemPluginConfig): ResolvedConfig {
     baseUrl: raw.baseUrl.replace(/\/+$/, ""),
     apiKey: raw.apiKey,
     defaultGraphId: raw.defaultGraphId,
+    sharedReadGraphIds: raw.sharedReadGraphIds ?? [],
     timeoutMs: raw.timeoutMs ?? DEFAULTS.timeoutMs,
     maxRetries: raw.maxRetries ?? DEFAULTS.maxRetries,
     autoRemember:
