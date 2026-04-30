@@ -15,6 +15,7 @@ import numpy as np
 
 from plugmem.clients.embedding import EmbeddingClient, get_similarity
 from plugmem.clients.llm import LLMClient
+from plugmem.clients.llm_router import LLMRouter
 from plugmem.core.graph_node import (
     EpisodicNode,
     ProceduralNode,
@@ -69,9 +70,22 @@ class MemoryGraph:
     ):
         self.graph_id = graph_id
         self.storage = storage
-        self.llm = llm
         self.embedder = embedder
         self.prompts = prompts
+
+        # LLM routing — if a plain LLMClient is passed, wrap it so all
+        # roles use the same client.  If an LLMRouter is passed, each
+        # operation category gets the role-specific client.
+        if isinstance(llm, LLMRouter):
+            self._router = llm
+        else:
+            self._router = LLMRouter.from_single_client(llm)
+        # Convenience aliases used throughout this file
+        self.llm: LLMClient = self._router.for_role("default")
+        self.structuring_llm: LLMClient = self._router.structuring
+        self.retrieval_llm: LLMClient = self._router.retrieval
+        self.reasoning_llm: LLMClient = self._router.reasoning
+        self.consolidation_llm: LLMClient = self._router.consolidation
 
         # Value functions (defaults if not provided)
         self.tag_equal = tag_equal or TagEqual()
@@ -422,7 +436,7 @@ class MemoryGraph:
             if subgoal_node is not None:
                 # Merge subgoal
                 merged_str = get_new_subgoal(
-                    self.llm, subgoal_node.get_subgoal(), subgoal_str,
+                    self.consolidation_llm, subgoal_node.get_subgoal(), subgoal_str,
                     prompts=self.prompts, graph_id=self.graph_id,
                 )
                 subgoal_node.embedding = self.embedder.embed(merged_str)
@@ -768,14 +782,14 @@ class MemoryGraph:
         mode: str = None,
     ) -> Tuple[List[Dict[str, str]], Dict[str, Any], str]:
         next_subgoal, query_tags = get_plan(
-            self.llm, goal=goal, subgoal=subgoal, state=state, observation=observation,
+            self.retrieval_llm, goal=goal, subgoal=subgoal, state=state, observation=observation,
             prompts=self.prompts, graph_id=self.graph_id,
         )
         logger.info("query_tags: %s", query_tags)
 
         if mode is None:
             mode = get_mode(
-                self.llm, observation=observation, task_type=task_type,
+                self.retrieval_llm, observation=observation, task_type=task_type,
                 prompts=self.prompts, graph_id=self.graph_id,
             )
         logger.info("mode: %s", mode)
@@ -857,7 +871,7 @@ class MemoryGraph:
             observation=observation, time=time,
             task_type=task_type, mode=mode,
         )
-        return self.llm.complete(messages=messages)
+        return self.reasoning_llm.complete(messages=messages)
 
     # ------------------------------------------------------------------ #
     # Semantic merging / consolidation
@@ -867,7 +881,7 @@ class MemoryGraph:
         sem1 = self.semantic_id2node[id1]
         sem2 = self.semantic_id2node[id2]
         merge_decision = get_new_semantic(
-            self.llm, sem1.get_semantic_memory(), sem2.get_semantic_memory(),
+            self.consolidation_llm, sem1.get_semantic_memory(), sem2.get_semantic_memory(),
             prompts=self.prompts, graph_id=self.graph_id,
         )
 

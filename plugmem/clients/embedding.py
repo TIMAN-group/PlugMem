@@ -82,6 +82,12 @@ class PlugMemEmbeddingFunction:
     def __init__(self, client: EmbeddingClient):
         self._client = client
 
+    def name(self) -> str:
+        return "plugmem"
+
+    def is_legacy(self) -> bool:
+        return False
+
     def __call__(self, input: List[str]) -> List[List[float]]:
         return self._client.embed_batch(input)
 

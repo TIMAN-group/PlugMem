@@ -9,6 +9,7 @@ from typing import Dict, List, Optional
 
 from plugmem.clients.embedding import EmbeddingClient
 from plugmem.clients.llm import LLMClient
+from plugmem.clients.llm_router import LLMRouter
 from plugmem.core.memory_graph import MemoryGraph
 from plugmem.storage.chroma import ChromaStorage
 

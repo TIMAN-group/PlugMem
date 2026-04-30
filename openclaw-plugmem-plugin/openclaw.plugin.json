@@ -1,0 +1,41 @@
+{
+  "id": "plugmem",
+  "name": "PlugMem",
+  "description": "Long-term memory for LLM agents — store and recall experiences across sessions",
+  "version": "0.1.0",
+  "kind": "memory",
+  "configSchema": {
+    "type": "object",
+    "properties": {
+      "baseUrl": {
+        "type": "string",
+        "description": "PlugMem service URL (e.g. http://localhost:8080)"
+      },
+      "apiKey": {
+        "type": "string",
+        "description": "API key for PlugMem service authentication"
+      },
+      "defaultGraphId": {
+        "type": "string",
+        "description": "Default memory graph ID to use when not specified per-call"
+      },
+      "sharedReadGraphIds": {
+        "type": "array",
+        "items": { "type": "string" },
+        "description": "Extra graph IDs always included in recall fan-out (read-only). Typically a user-level semantic graph shared across agents.",
+        "default": []
+      },
+      "timeoutMs": {
+        "type": "number",
+        "description": "Request timeout in milliseconds",
+        "default": 30000
+      },
+      "maxRetries": {
+        "type": "number",
+        "description": "Maximum number of retry attempts for failed requests",
+        "default": 3
+      }
+    },
+    "required": ["baseUrl"]
+  }
+}

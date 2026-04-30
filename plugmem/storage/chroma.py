@@ -93,12 +93,13 @@ class ChromaStorage:
         """List all graph IDs by inspecting collection names."""
         collections = self._client.list_collections()
         graph_ids: set[str] = set()
-        for name in collections:
-            # collection names look like: graphid_nodetype
+        for col in collections:
+            # col may be a Collection object or a string depending on chromadb version
+            col_name = col.name if hasattr(col, "name") else str(col)
             for nt in NODE_TYPES:
                 suffix = f"_{nt}"
-                if isinstance(name, str) and name.endswith(suffix):
-                    graph_ids.add(name[: -len(suffix)])
+                if col_name.endswith(suffix):
+                    graph_ids.add(col_name[: -len(suffix)])
                     break
         return sorted(graph_ids)
 
