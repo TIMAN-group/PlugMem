@@ -212,3 +212,6 @@ __marimo__/
 
 # ChromaDB persistent data
 data/
+
+# Local working notes (not for the repo)
+CLAUDE.md
