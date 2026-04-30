@@ -158,6 +158,29 @@ class NodeListResponse(BaseModel):
 
 
 # ------------------------------------------------------------------ #
+# Inspector
+# ------------------------------------------------------------------ #
+
+class SearchResponse(BaseModel):
+    graph_id: str
+    node_type: str
+    query: str
+    count: int
+    nodes: List[Dict[str, Any]]
+
+
+class NodeDetailResponse(BaseModel):
+    graph_id: str
+    node_type: str
+    node: Dict[str, Any]
+    edges: Dict[str, List[Dict[str, Any]]]
+
+
+class SemanticUpdateRequest(BaseModel):
+    is_active: Optional[bool] = None
+
+
+# ------------------------------------------------------------------ #
 # Health
 # ------------------------------------------------------------------ #
 

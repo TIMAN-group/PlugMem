@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PlugMem — Memory Inspector</title>
+  <link id="theme-link" rel="stylesheet" href="themes/default.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-left">
+      <h1 class="brand">PlugMem · Memory Inspector</h1>
+      <label class="field">
+        <span class="field-label">Graph</span>
+        <select id="graph-picker"></select>
+      </label>
+    </div>
+    <div class="topbar-right">
+      <div id="stats-bar" class="stats" aria-live="polite"></div>
+      <label class="field">
+        <span class="field-label">Theme</span>
+        <select id="theme-picker">
+          <option value="default">default</option>
+        </select>
+      </label>
+      <button id="api-key-btn" class="btn btn-ghost" title="Set X-API-Key">key</button>
+    </div>
+  </header>
+
+  <nav class="tabs" role="tablist">
+    <button class="tab" data-tab="browse" role="tab">Browse</button>
+    <button class="tab" data-tab="recall" role="tab">Recall trace</button>
+    <button class="tab" data-tab="graph" role="tab">Graph</button>
+  </nav>
+
+  <div id="toast" class="toast" hidden></div>
+
+  <main class="main">
+    <section id="tab-browse" class="tab-panel" role="tabpanel" hidden>
+      <aside class="sidebar">
+        <div class="chip-row" id="browse-type-chips" role="tablist" aria-label="Node type"></div>
+        <div class="search-row">
+          <input id="browse-search" type="search" placeholder="search text…" autocomplete="off">
+          <label class="check"><input type="checkbox" id="browse-only-active"> only active</label>
+        </div>
+        <div class="hint" id="browse-result-hint"></div>
+      </aside>
+      <section class="content split">
+        <div class="table-wrap">
+          <table class="node-table">
+            <thead><tr id="browse-thead"></tr></thead>
+            <tbody id="browse-tbody"></tbody>
+          </table>
+          <div id="browse-empty" class="empty" hidden>No nodes match.</div>
+        </div>
+        <aside id="detail-panel" class="detail-panel" hidden>
+          <div class="detail-header">
+            <span id="detail-title" class="detail-title"></span>
+            <button id="detail-close" class="btn btn-ghost" aria-label="Close">×</button>
+          </div>
+          <div id="detail-body" class="detail-body"></div>
+        </aside>
+      </section>
+    </section>
+
+    <section id="tab-recall" class="tab-panel" role="tabpanel" hidden>
+      <div class="placeholder">
+        <h2>Recall trace</h2>
+        <p>Phase 2. This tab will let you submit an observation/goal and see why each candidate did or didn't make the final cut, with score breakdowns.</p>
+      </div>
+    </section>
+
+    <section id="tab-graph" class="tab-panel" role="tabpanel" hidden>
+      <div class="placeholder">
+        <h2>Graph view</h2>
+        <p>Phase 3. Force-directed view of the memory graph. Best for small graphs and screenshots.</p>
+      </div>
+    </section>
+  </main>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>

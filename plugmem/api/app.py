@@ -3,13 +3,18 @@ from __future__ import annotations
 
 import logging
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI
+from fastapi.responses import RedirectResponse
+from fastapi.staticfiles import StaticFiles
 
 from plugmem import __version__
-from plugmem.api.routes import graphs, health, memories, retrieval
+from plugmem.api.routes import graphs, health, inspector, memories, retrieval
 
 logger = logging.getLogger(__name__)
+
+_STATIC_DIR = Path(__file__).parent / "static"
 
 
 def create_app() -> FastAPI:
@@ -32,6 +37,20 @@ def create_app() -> FastAPI:
     app.include_router(graphs.router, prefix="/api/v1")
     app.include_router(memories.router, prefix="/api/v1")
     app.include_router(retrieval.router, prefix="/api/v1")
+    app.include_router(inspector.router, prefix="/api/v1")
+
+    # Memory Inspector — static SPA mounted at /inspector/
+    inspector_dir = _STATIC_DIR / "inspector"
+    if inspector_dir.is_dir():
+        app.mount(
+            "/inspector",
+            StaticFiles(directory=str(inspector_dir), html=True),
+            name="inspector",
+        )
+
+        @app.get("/", include_in_schema=False)
+        async def _root() -> RedirectResponse:
+            return RedirectResponse(url="/inspector/")
 
     return app
 

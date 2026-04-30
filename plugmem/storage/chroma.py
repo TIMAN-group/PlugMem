@@ -94,8 +94,16 @@ class ChromaStorage:
         collections = self._client.list_collections()
         graph_ids: set[str] = set()
         for col in collections:
-            # col may be a Collection object or a string depending on chromadb version
-            col_name = col.name if hasattr(col, "name") else str(col)
+            # col may be a Collection object or a string depending on chromadb version.
+            # In chromadb >= 0.6 list_collections returns names (strings); accessing
+            # `.name` on the proxy raises NotImplementedError despite hasattr being True.
+            if isinstance(col, str):
+                col_name = col
+            else:
+                try:
+                    col_name = col.name
+                except (AttributeError, NotImplementedError):
+                    col_name = str(col)
             for nt in NODE_TYPES:
                 suffix = f"_{nt}"
                 if col_name.endswith(suffix):
