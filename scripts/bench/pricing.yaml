@@ -1,0 +1,52 @@
+# Per-model pricing in USD per 1M tokens.
+# Used by analyze.py to compute dollar-weighted curves and dollar-crossover R*.
+#
+# Each entry MUST list:
+#   input:   $/M input tokens
+#   output:  $/M output tokens
+#
+# Embedding models use only `input` (their output is vectors, not tokens).
+# Update these as vendor pricing changes.
+
+models:
+  # ---- Anthropic ----
+  claude-opus-4-7:
+    input: 15.00
+    output: 75.00
+  claude-sonnet-4-6:
+    input: 3.00
+    output: 15.00
+  claude-haiku-4-5-20251001:
+    input: 1.00
+    output: 5.00
+
+  # ---- OpenAI ----
+  gpt-4o:
+    input: 2.50
+    output: 10.00
+  gpt-4o-mini:
+    input: 0.15
+    output: 0.60
+  4o:
+    input: 2.50
+    output: 10.00
+  4o-mini:
+    input: 0.15
+    output: 0.60
+
+  # ---- Self-hosted / vLLM ----
+  # Substitute amortized $/token from your infra. Defaults below assume
+  # a Qwen2.5-32B fp8 on a single H100 at 60% util — adjust to your fleet.
+  CalamitousFelicitousness/Qwen2.5-32B-Instruct-fp8-dynamic:
+    input: 0.05
+    output: 0.05
+
+  # ---- Embeddings ----
+  nvidia/NV-Embed-v2:
+    input: 0.02
+    output: 0.00
+
+# Fallback used when a model logged in JSONL is not found above.
+default:
+  input: 1.00
+  output: 3.00
