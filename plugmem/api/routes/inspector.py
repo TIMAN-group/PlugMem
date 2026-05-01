@@ -9,10 +9,13 @@ from plugmem.api.auth import require_api_key
 from plugmem.api.dependencies import get_graph_manager
 from plugmem.api.schemas import (
     NodeDetailResponse,
+    RecallAuditEntry,
+    RecallListResponse,
     RecallTraceRequest,
     RecallTraceResponse,
     SearchResponse,
     SemanticUpdateRequest,
+    SessionListResponse,
     TopologyResponse,
 )
 from plugmem.graph_manager import GraphManager
@@ -270,6 +273,32 @@ async def recall_trace(graph_id: str, body: RecallTraceRequest) -> RecallTraceRe
         )
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"recall failed: {exc}") from exc
+
+    # Audit the trace call so it shows up in the Sessions view alongside
+    # /retrieve and /reason. Best-effort — never fails the response.
+    try:
+        from datetime import datetime, timezone
+
+        graph.storage.add_recall(
+            graph_id,
+            endpoint="recall_trace",
+            ts=datetime.now(timezone.utc).isoformat(),
+            graph_time=graph.semantic_time,
+            session_id=body.session_id,
+            observation=body.observation or "",
+            goal=body.goal or "",
+            subgoal=body.subgoal or "",
+            state=body.state or "",
+            task_type=body.task_type or "",
+            mode=result.get("mode", ""),
+            next_subgoal=(result.get("plan") or {}).get("next_subgoal", "") or "",
+            query_tags=(result.get("plan") or {}).get("query_tags", []) or [],
+            selected_semantic_ids=(result.get("selected") or {}).get("semantic_ids", []) or [],
+            selected_procedural_ids=(result.get("selected") or {}).get("procedural_ids", []) or [],
+            n_messages=len(result.get("rendered_prompt") or []),
+        )
+    except Exception:
+        pass
 
     return RecallTraceResponse(**result)
 
@@ -543,3 +572,31 @@ async def update_semantic(
             "tags": [_serialize_tag(t) for t in node.tag_nodes],
         },
     )
+
+
+# ------------------------------------------------------------------ #
+# /recalls — audit log of /retrieve, /reason, /recall_trace calls
+# ------------------------------------------------------------------ #
+
+
+@router.get("/{graph_id}/recalls", response_model=RecallListResponse)
+async def list_recalls(
+    graph_id: str,
+    session_id: Optional[str] = None,
+    limit: int = 100,
+) -> RecallListResponse:
+    graph = _get_graph(graph_id)
+    rows = graph.storage.list_recalls(graph_id, session_id=session_id, limit=limit)
+    return RecallListResponse(
+        graph_id=graph_id,
+        session_id=session_id,
+        count=len(rows),
+        recalls=[RecallAuditEntry(**row) for row in rows],
+    )
+
+
+@router.get("/{graph_id}/sessions", response_model=SessionListResponse)
+async def list_sessions(graph_id: str) -> SessionListResponse:
+    _get_graph(graph_id)  # 404 if missing
+    sessions = _manager().storage.list_sessions(graph_id)
+    return SessionListResponse(graph_id=graph_id, sessions=sessions)

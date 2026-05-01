@@ -1,6 +1,9 @@
 """Retrieve and Reason endpoints."""
 from __future__ import annotations
 
+from datetime import datetime, timezone
+from typing import Any, Dict
+
 from fastapi import APIRouter, Depends, HTTPException
 
 from plugmem.api.auth import require_api_key
@@ -14,6 +17,44 @@ from plugmem.api.schemas import (
     RetrieveResponse,
 )
 from plugmem.graph_manager import GraphManager
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _write_audit(
+    graph,
+    *,
+    endpoint: str,
+    body,
+    audit: Dict[str, Any],
+    mode: str,
+    n_messages: int,
+) -> None:
+    """Best-effort audit write — never breaks the recall path."""
+    try:
+        graph.storage.add_recall(
+            graph.graph_id,
+            endpoint=endpoint,
+            ts=_now_iso(),
+            graph_time=graph.semantic_time,
+            session_id=getattr(body, "session_id", None),
+            observation=body.observation or "",
+            goal=body.goal or "",
+            subgoal=body.subgoal or "",
+            state=body.state or "",
+            task_type=body.task_type or "",
+            mode=mode,
+            next_subgoal=audit.get("next_subgoal", ""),
+            query_tags=audit.get("query_tags", []),
+            selected_semantic_ids=audit.get("selected_semantic_ids", []),
+            selected_procedural_ids=audit.get("selected_procedural_ids", []),
+            n_messages=n_messages,
+        )
+    except Exception:
+        # Don't let an audit-log failure break a working recall.
+        pass
 
 router = APIRouter(prefix="/graphs", tags=["retrieval"], dependencies=[Depends(require_api_key)])
 
@@ -34,6 +75,7 @@ def _get_graph(graph_id: str):
 async def retrieve(graph_id: str, body: RetrieveRequest) -> RetrieveResponse:
     graph = _get_graph(graph_id)
 
+    audit: Dict[str, Any] = {}
     messages, variables, mode = graph.retrieve_memory(
         goal=body.goal,
         subgoal=body.subgoal,
@@ -42,7 +84,9 @@ async def retrieve(graph_id: str, body: RetrieveRequest) -> RetrieveResponse:
         time=body.time,
         task_type=body.task_type,
         mode=body.mode,
+        _audit=audit,
     )
+    _write_audit(graph, endpoint="retrieve", body=body, audit=audit, mode=mode, n_messages=len(messages))
 
     return RetrieveResponse(
         mode=mode,
@@ -55,6 +99,7 @@ async def retrieve(graph_id: str, body: RetrieveRequest) -> RetrieveResponse:
 async def reason(graph_id: str, body: ReasonRequest) -> ReasonResponse:
     graph = _get_graph(graph_id)
 
+    audit: Dict[str, Any] = {}
     messages, variables, mode = graph.retrieve_memory(
         goal=body.goal,
         subgoal=body.subgoal,
@@ -63,9 +108,11 @@ async def reason(graph_id: str, body: ReasonRequest) -> ReasonResponse:
         time=body.time,
         task_type=body.task_type,
         mode=body.mode,
+        _audit=audit,
     )
 
     reasoning = graph.llm.complete(messages=messages)
+    _write_audit(graph, endpoint="reason", body=body, audit=audit, mode=mode, n_messages=len(messages))
 
     return ReasonResponse(
         mode=mode,

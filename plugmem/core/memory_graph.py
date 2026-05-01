@@ -905,6 +905,7 @@ class MemoryGraph:
         time: str = "",
         task_type: str = "",
         mode: str = None,
+        _audit: Optional[Dict[str, Any]] = None,
     ) -> Tuple[List[Dict[str, str]], Dict[str, Any], str]:
         next_subgoal, query_tags = get_plan(
             self.retrieval_llm, goal=goal, subgoal=subgoal, state=state, observation=observation,
@@ -979,6 +980,13 @@ class MemoryGraph:
         }
         messages = prompt_template.build_messages(variables)
         messages = [{"role": m.role, "content": m.content} for m in messages]
+
+        if _audit is not None:
+            _audit["next_subgoal"] = next_subgoal or ""
+            _audit["query_tags"] = list(query_tags or [])
+            _audit["selected_semantic_ids"] = [n.semantic_id for n in semantic_nodes]
+            _audit["selected_procedural_ids"] = [n.procedural_id for n in procedural_nodes]
+
         return messages, variables, mode
 
     def retrieve_with_trace(

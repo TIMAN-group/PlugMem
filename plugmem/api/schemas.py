@@ -218,6 +218,10 @@ class RecallTraceRequest(BaseModel):
         False,
         description="If True, fill missing mode/tags/subgoal via the LLM planner (paid).",
     )
+    session_id: Optional[str] = Field(
+        None,
+        description="If set, the trace is logged to the recall audit under this session id.",
+    )
 
 
 class RecallTraceResponse(BaseModel):
@@ -235,6 +239,37 @@ class TopologyResponse(BaseModel):
     counts: Dict[str, int]
     truncated: bool
     node_limit: int
+
+
+class RecallAuditEntry(BaseModel):
+    recall_id: int
+    endpoint: str
+    ts: str
+    graph_time: int = 0
+    session_id: Optional[str] = None
+    observation: str = ""
+    goal: str = ""
+    subgoal: str = ""
+    state: str = ""
+    task_type: str = ""
+    mode: str = ""
+    next_subgoal: str = ""
+    query_tags: List[str] = Field(default_factory=list)
+    selected_semantic_ids: List[int] = Field(default_factory=list)
+    selected_procedural_ids: List[int] = Field(default_factory=list)
+    n_messages: int = 0
+
+
+class RecallListResponse(BaseModel):
+    graph_id: str
+    count: int
+    session_id: Optional[str] = None
+    recalls: List[RecallAuditEntry]
+
+
+class SessionListResponse(BaseModel):
+    graph_id: str
+    sessions: List[str]
 
 
 # ------------------------------------------------------------------ #

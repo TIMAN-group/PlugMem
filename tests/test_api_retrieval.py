@@ -54,3 +54,72 @@ def test_consolidate(client):
     data = resp.json()
     assert data["status"] == "ok"
     assert "merged_pairs" in data["stats"]
+
+
+# ── Recall audit log ──
+
+
+def test_retrieve_writes_audit_row(client):
+    _seed_graph(client, "audit_test")
+    resp = client.post("/api/v1/graphs/audit_test/retrieve", json={
+        "observation": "boiling point",
+        "mode": "semantic_memory",
+        "session_id": "run-1",
+    })
+    assert resp.status_code == 200
+
+    resp = client.get("/api/v1/graphs/audit_test/recalls")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["count"] == 1
+    row = data["recalls"][0]
+    assert row["endpoint"] == "retrieve"
+    assert row["session_id"] == "run-1"
+    assert row["observation"] == "boiling point"
+    assert row["mode"] == "semantic_memory"
+    assert row["n_messages"] > 0
+
+
+def test_recalls_filter_by_session_id(client):
+    _seed_graph(client, "audit_filter")
+    # Two recalls: one with session, one without
+    client.post("/api/v1/graphs/audit_filter/retrieve", json={
+        "observation": "q1", "mode": "semantic_memory", "session_id": "run-A",
+    })
+    client.post("/api/v1/graphs/audit_filter/retrieve", json={
+        "observation": "q2", "mode": "semantic_memory", "session_id": "run-B",
+    })
+    client.post("/api/v1/graphs/audit_filter/retrieve", json={
+        "observation": "q3", "mode": "semantic_memory",
+    })
+
+    resp = client.get("/api/v1/graphs/audit_filter/recalls?session_id=run-A")
+    assert resp.status_code == 200
+    rows = resp.json()["recalls"]
+    assert len(rows) == 1
+    assert rows[0]["session_id"] == "run-A"
+    assert rows[0]["observation"] == "q1"
+
+    # No filter — all three
+    resp = client.get("/api/v1/graphs/audit_filter/recalls")
+    assert resp.json()["count"] == 3
+
+
+def test_sessions_endpoint_lists_distinct_session_ids(client):
+    _seed_graph(client, "sess_list")
+    # Insert with session_id
+    client.post("/api/v1/graphs/sess_list/memories", json={
+        "mode": "structured",
+        "session_id": "run-X",
+        "semantic": [{"semantic_memory": "fact for X", "tags": []}],
+    })
+    # Recall under a different session_id
+    client.post("/api/v1/graphs/sess_list/retrieve", json={
+        "observation": "anything", "mode": "semantic_memory", "session_id": "run-Y",
+    })
+
+    resp = client.get("/api/v1/graphs/sess_list/sessions")
+    assert resp.status_code == 200
+    sessions = resp.json()["sessions"]
+    assert "run-X" in sessions
+    assert "run-Y" in sessions
