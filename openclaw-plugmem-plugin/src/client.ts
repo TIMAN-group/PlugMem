@@ -200,8 +200,14 @@ export class PlugMemClient {
     graphId: string,
     goal: string,
     steps: Array<{ observation: string; action: string }>,
+    options?: { session_id?: string },
   ): Promise<MemoryInsertResponse> {
-    return this.insertMemories(graphId, { mode: "trajectory", goal, steps });
+    return this.insertMemories(graphId, {
+      mode: "trajectory",
+      goal,
+      steps,
+      ...(options?.session_id ? { session_id: options.session_id } : {}),
+    });
   }
 
   async insertStructured(

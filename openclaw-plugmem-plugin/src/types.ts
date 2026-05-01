@@ -56,6 +56,11 @@ export interface TrajectoryInsertRequest {
   mode: "trajectory";
   goal: string;
   steps: TrajectoryStep[];
+  /**
+   * Stamps every node created by this insert with the given session id.
+   * Used by PlugMem's Sessions view + recall audit log.
+   */
+  session_id?: string;
 }
 
 export interface StructuredInsertRequest {
@@ -63,6 +68,7 @@ export interface StructuredInsertRequest {
   episodic?: EpisodicStep[][];
   semantic?: SemanticMemoryInput[];
   procedural?: ProceduralMemoryInput[];
+  session_id?: string;
 }
 
 export type MemoryInsertRequest =
