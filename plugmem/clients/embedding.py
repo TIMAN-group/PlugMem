@@ -5,6 +5,7 @@ and provides a ChromaDB EmbeddingFunction adapter.
 """
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
 import time
@@ -30,12 +31,18 @@ class EmbeddingClient(ABC):
 
 
 class HTTPEmbeddingClient(EmbeddingClient):
-    """Embedding client that calls an HTTP endpoint (e.g. NV-Embed-v2 server)."""
+    """Embedding client that calls an OpenAI-shaped HTTP endpoint.
+
+    Works against the bundled NV-Embed-v2 server, OpenAI's official
+    /v1/embeddings, and any compatible provider (Voyage, Together, etc.).
+    Pass ``api_key`` to send the standard ``Authorization: Bearer …`` header.
+    """
 
     def __init__(
         self,
         base_url: str,
         model: str = "nvidia/NV-Embed-v2",
+        api_key: Optional[str] = None,
         max_text_len: int = 8192,
         max_retries: int = 5,
         retry_delay: float = 5.0,
@@ -43,6 +50,7 @@ class HTTPEmbeddingClient(EmbeddingClient):
     ):
         self.base_url = base_url
         self.model = model
+        self.api_key = api_key
         self.max_text_len = max_text_len
         self.max_retries = max_retries
         self.retry_delay = retry_delay
@@ -51,6 +59,8 @@ class HTTPEmbeddingClient(EmbeddingClient):
     def embed(self, text: str) -> List[float]:
         text = text[: self.max_text_len]
         headers = {"Content-Type": "application/json"}
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
         data = {"model": self.model, "input": text}
 
         for attempt in range(1, self.max_retries + 1):
@@ -70,6 +80,32 @@ class HTTPEmbeddingClient(EmbeddingClient):
 
     def embed_batch(self, texts: List[str]) -> List[List[float]]:
         return [self.embed(t) for t in texts]
+
+
+class LocalDeterministicEmbeddingClient(EmbeddingClient):
+    """Deterministic sha256-based embedder used as a fallback when no HTTP
+    embedding service is configured.
+
+    NOT semantically meaningful — same hash family used by the demo seed —
+    but it lets the inspector's recall trace run end-to-end without external
+    services. Configured automatically when ``EMBEDDING_BASE_URL`` is empty.
+    """
+
+    def __init__(self, dim: int = 32):
+        self.dim = dim
+
+    def _embed_one(self, text: str) -> List[float]:
+        # Each byte → a float in [-1, 1). Cycle the digest if dim > 32.
+        # This keeps every component the same magnitude so cosine similarity
+        # is well-conditioned: identical text → 1.0, unrelated → ~0.
+        h = hashlib.sha256((text or "").encode("utf-8")).digest()
+        return [((h[i % len(h)] - 128) / 128.0) for i in range(self.dim)]
+
+    def embed(self, text: str) -> List[float]:
+        return self._embed_one(text)
+
+    def embed_batch(self, texts: List[str]) -> List[List[float]]:
+        return [self._embed_one(t) for t in texts]
 
 
 class PlugMemEmbeddingFunction:

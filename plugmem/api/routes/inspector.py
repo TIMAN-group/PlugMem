@@ -9,8 +9,11 @@ from plugmem.api.auth import require_api_key
 from plugmem.api.dependencies import get_graph_manager
 from plugmem.api.schemas import (
     NodeDetailResponse,
+    RecallTraceRequest,
+    RecallTraceResponse,
     SearchResponse,
     SemanticUpdateRequest,
+    TopologyResponse,
 )
 from plugmem.graph_manager import GraphManager
 
@@ -240,6 +243,274 @@ async def get_node_detail(graph_id: str, node_type: str, node_id: int) -> NodeDe
 # ------------------------------------------------------------------ #
 # PATCH semantic node — currently only is_active is mutable
 # ------------------------------------------------------------------ #
+
+
+@router.post("/{graph_id}/recall_trace", response_model=RecallTraceResponse)
+async def recall_trace(graph_id: str, body: RecallTraceRequest) -> RecallTraceResponse:
+    """Run the retrieval pipeline with full instrumentation.
+
+    Without ``auto_plan=true`` the LLM is not called — sensible defaults are
+    used (mode=semantic_memory, no tags, subgoal=observation), so the demo
+    runs end-to-end without an LLM service.
+    """
+    graph = _get_graph(graph_id)
+    try:
+        result = graph.retrieve_with_trace(
+            observation=body.observation,
+            goal=body.goal,
+            subgoal=body.subgoal,
+            state=body.state,
+            time=body.time,
+            task_type=body.task_type,
+            mode=body.mode,
+            query_tags=body.query_tags,
+            next_subgoal=body.next_subgoal,
+            auto_plan=body.auto_plan,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"recall failed: {exc}") from exc
+
+    return RecallTraceResponse(**result)
+
+
+# ------------------------------------------------------------------ #
+# /topology — cytoscape-shaped node/edge dump for the Graph view
+# ------------------------------------------------------------------ #
+
+
+_UID_PREFIX = {
+    "semantic": "sem",
+    "tag": "tag",
+    "procedural": "proc",
+    "subgoal": "sg",
+    "episodic": "epis",
+}
+_TYPE_PRIORITY = ("semantic", "procedural", "tag", "subgoal", "episodic")
+
+
+def _uid(node_type: str, node_id: int) -> str:
+    return f"{_UID_PREFIX[node_type]}-{node_id}"
+
+
+def _short(s: str, n: int = 60) -> str:
+    if not s:
+        return ""
+    s = s.strip().replace("\n", " ")
+    return s if len(s) <= n else s[: n - 1] + "…"
+
+
+def _topology_node(node_type: str, node) -> Dict[str, Any]:
+    if node_type == "semantic":
+        return {
+            "data": {
+                "id": _uid("semantic", node.semantic_id),
+                "type": "semantic",
+                "node_id": node.semantic_id,
+                "label": _short(node.get_semantic_memory()),
+                "is_active": node.is_active,
+                "credibility": getattr(node, "Credibility", 10),
+                "time": node.time,
+            },
+            "classes": "semantic" if node.is_active else "semantic inactive",
+        }
+    if node_type == "tag":
+        return {
+            "data": {
+                "id": _uid("tag", node.tag_id),
+                "type": "tag",
+                "node_id": node.tag_id,
+                "label": node.tag,
+                "importance": node.importance,
+                "time": node.time,
+            },
+            "classes": "tag",
+        }
+    if node_type == "subgoal":
+        return {
+            "data": {
+                "id": _uid("subgoal", node.subgoal_id),
+                "type": "subgoal",
+                "node_id": node.subgoal_id,
+                "label": _short(node.subgoal, 40),
+                "activated": node.activate,
+                "time": node.time,
+            },
+            "classes": "subgoal",
+        }
+    if node_type == "procedural":
+        return {
+            "data": {
+                "id": _uid("procedural", node.procedural_id),
+                "type": "procedural",
+                "node_id": node.procedural_id,
+                "label": _short(node.get_procedural_memory()),
+                "return": node.Return,
+                "time": node.time,
+            },
+            "classes": "procedural",
+        }
+    # episodic
+    return {
+        "data": {
+            "id": _uid("episodic", node.episodic_id),
+            "type": "episodic",
+            "node_id": node.episodic_id,
+            "label": _short(node.observation or node.action or "(empty)", 40),
+            "session_id": node.session_id,
+            "time": node.time,
+        },
+        "classes": "episodic",
+    }
+
+
+def _edge(source: str, target: str, kind: str) -> Dict[str, Any]:
+    return {
+        "data": {
+            "id": f"{source}__{kind}__{target}",
+            "source": source,
+            "target": target,
+            "kind": kind,
+        },
+        "classes": kind,
+    }
+
+
+def _build_topology(
+    graph,
+    *,
+    include_episodic: bool,
+    include_inactive: bool,
+    node_limit: int,
+    tag_min_importance: int,
+) -> Dict[str, Any]:
+    pools: Dict[str, List] = {
+        "semantic": list(graph.semantic_nodes),
+        "tag": [t for t in graph.tag_nodes if t.importance >= tag_min_importance],
+        "procedural": list(graph.procedural_nodes),
+        "subgoal": list(graph.subgoal_nodes),
+        "episodic": list(graph.episodic_nodes) if include_episodic else [],
+    }
+    if not include_inactive:
+        pools["semantic"] = [s for s in pools["semantic"] if s.is_active]
+
+    for pool in pools.values():
+        pool.sort(key=lambda n: getattr(n, "time", 0) or 0, reverse=True)
+
+    total = sum(len(p) for p in pools.values())
+    truncated = total > node_limit
+
+    if truncated:
+        # Equal split across types that have items, then distribute leftovers
+        # by priority order.
+        active_types = [t for t in _TYPE_PRIORITY if pools[t]]
+        share = node_limit // max(1, len(active_types))
+        chosen = {t: [] for t in pools}
+        budget = node_limit
+        for t in active_types:
+            take = min(share, len(pools[t]))
+            chosen[t] = pools[t][:take]
+            budget -= take
+        for t in _TYPE_PRIORITY:
+            if budget <= 0:
+                break
+            already = len(chosen[t])
+            extra = min(budget, len(pools[t]) - already)
+            if extra > 0:
+                chosen[t] = pools[t][: already + extra]
+                budget -= extra
+        pools = chosen
+
+    # Emit nodes
+    out_nodes: List[Dict[str, Any]] = []
+    included: Dict[str, set] = {t: set() for t in pools}
+    for node_type in _TYPE_PRIORITY:
+        for n in pools[node_type]:
+            out_nodes.append(_topology_node(node_type, n))
+            nid = getattr(n, f"{'episodic' if node_type == 'episodic' else node_type}_id")
+            included[node_type].add(nid)
+
+    # Emit edges, only between included nodes; dedupe by edge id
+    out_edges: List[Dict[str, Any]] = []
+    seen: set = set()
+
+    def _add(source: str, target: str, kind: str) -> None:
+        eid = f"{source}__{kind}__{target}"
+        if eid in seen:
+            return
+        seen.add(eid)
+        out_edges.append(_edge(source, target, kind))
+
+    for s in pools["semantic"]:
+        sid = _uid("semantic", s.semantic_id)
+        for t in s.tag_nodes:
+            if t.tag_id in included["tag"]:
+                _add(sid, _uid("tag", t.tag_id), "tagged")
+        for e in s.episodic_nodes:
+            if e.episodic_id in included["episodic"]:
+                _add(sid, _uid("episodic", e.episodic_id), "evidenced_by")
+        for bro in s.bro_semantic_nodes:
+            if bro is None or bro.semantic_id not in included["semantic"]:
+                continue
+            # Symmetric: emit once with the lower id as source.
+            a, b = sorted((s.semantic_id, bro.semantic_id))
+            _add(_uid("semantic", a), _uid("semantic", b), "related")
+        for son in getattr(s, "son_semantic", []):
+            if son is None or son.semantic_id not in included["semantic"]:
+                continue
+            _add(sid, _uid("semantic", son.semantic_id), "derived_from")
+
+    for p in pools["procedural"]:
+        pid = _uid("procedural", p.procedural_id)
+        for sg in p.subgoal_nodes:
+            if sg.subgoal_id in included["subgoal"]:
+                _add(pid, _uid("subgoal", sg.subgoal_id), "grouped_by")
+        for e in p.episodic_nodes:
+            if e.episodic_id in included["episodic"]:
+                _add(pid, _uid("episodic", e.episodic_id), "from_session")
+
+    counts = {t: len(pools[t]) for t in pools}
+    counts["total_nodes"] = len(out_nodes)
+    counts["total_edges"] = len(out_edges)
+    return {
+        "nodes": out_nodes,
+        "edges": out_edges,
+        "counts": counts,
+        "truncated": truncated,
+    }
+
+
+@router.get("/{graph_id}/topology", response_model=TopologyResponse)
+async def get_topology(
+    graph_id: str,
+    include_episodic: bool = False,
+    include_inactive: bool = True,
+    node_limit: int = 500,
+    tag_min_importance: int = 0,
+) -> TopologyResponse:
+    """Cytoscape-shaped node/edge dump for the Graph tab.
+
+    Episodics are off by default — they're numerous and noisy. Inactive
+    semantics are kept by default but rendered with a faded class so users
+    can see what was deactivated.
+    """
+    if node_limit <= 0:
+        raise HTTPException(status_code=400, detail="node_limit must be positive")
+    graph = _get_graph(graph_id)
+    payload = _build_topology(
+        graph,
+        include_episodic=include_episodic,
+        include_inactive=include_inactive,
+        node_limit=node_limit,
+        tag_min_importance=tag_min_importance,
+    )
+    return TopologyResponse(
+        graph_id=graph_id,
+        nodes=payload["nodes"],
+        edges=payload["edges"],
+        counts=payload["counts"],
+        truncated=payload["truncated"],
+        node_limit=node_limit,
+    )
 
 
 @router.patch("/{graph_id}/semantic/{semantic_id}", response_model=NodeDetailResponse)

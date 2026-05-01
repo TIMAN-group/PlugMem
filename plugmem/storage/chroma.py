@@ -155,6 +155,7 @@ class ChromaStorage:
         subgoal: str = "",
         state: str = "",
         reward: str = "",
+        embedding: Optional[List[float]] = None,
     ) -> None:
         doc = f"{observation}\n{action}" if observation or action else ""
         metadata: Dict[str, Any] = {
@@ -169,11 +170,14 @@ class ChromaStorage:
         if session_id is not None:
             metadata["session_id"] = session_id
         col = self._col(graph_id, "episodic")
-        col.add(
-            ids=[str(episodic_id)],
-            documents=[doc],
-            metadatas=[metadata],
-        )
+        kwargs: Dict[str, Any] = {
+            "ids": [str(episodic_id)],
+            "documents": [doc],
+            "metadatas": [metadata],
+        }
+        if embedding is not None:
+            kwargs["embeddings"] = [_to_list(embedding)]
+        col.add(**kwargs)
 
     def get_episodic(self, graph_id: str, episodic_id: int) -> Optional[Dict]:
         col = self._col(graph_id, "episodic")

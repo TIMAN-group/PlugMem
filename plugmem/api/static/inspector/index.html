@@ -35,6 +35,15 @@
 
   <div id="toast" class="toast" hidden></div>
 
+  <div id="empty-banner" class="banner" hidden>
+    <div>
+      <strong>No graphs yet.</strong>
+      Load a fake-but-realistic demo trajectory (a coding agent on the
+      <code>acme-api</code> repo plus a personal travel session) to play with the inspector.
+    </div>
+    <button id="empty-banner-btn" class="btn btn-primary">Load demo graph</button>
+  </div>
+
   <main class="main">
     <section id="tab-browse" class="tab-panel" role="tabpanel" hidden>
       <aside class="sidebar">
@@ -64,20 +73,96 @@
     </section>
 
     <section id="tab-recall" class="tab-panel" role="tabpanel" hidden>
-      <div class="placeholder">
-        <h2>Recall trace</h2>
-        <p>Phase 2. This tab will let you submit an observation/goal and see why each candidate did or didn't make the final cut, with score breakdowns.</p>
-      </div>
+      <aside class="sidebar recall-form">
+        <label class="form-row">
+          <span class="form-label">Observation <span class="req">*</span></span>
+          <textarea id="recall-observation" rows="4" placeholder="What is the agent reacting to right now?"></textarea>
+        </label>
+        <label class="form-row">
+          <span class="form-label">Mode</span>
+          <select id="recall-mode">
+            <option value="semantic_memory">semantic_memory (facts)</option>
+            <option value="procedural_memory">procedural_memory (workflows)</option>
+            <option value="episodic_memory">episodic_memory (raw)</option>
+          </select>
+        </label>
+        <label class="form-row">
+          <span class="form-label">Query tags <span class="form-hint">(comma-separated)</span></span>
+          <input id="recall-tags" type="text" placeholder="auth, fastapi">
+        </label>
+        <label class="form-row">
+          <span class="form-label">Subgoal (procedural only)</span>
+          <input id="recall-subgoal" type="text" placeholder="deploy to staging">
+        </label>
+        <details class="form-row">
+          <summary>Advanced</summary>
+          <label class="form-row">
+            <span class="form-label">Goal</span>
+            <input id="recall-goal" type="text">
+          </label>
+          <label class="form-row">
+            <span class="form-label">State</span>
+            <input id="recall-state" type="text">
+          </label>
+          <label class="form-row check">
+            <input type="checkbox" id="recall-auto-plan">
+            <span>Auto-plan via LLM <span class="form-hint">(uses LLM + costs tokens)</span></span>
+          </label>
+        </details>
+        <button id="recall-run" class="btn btn-primary">Run trace</button>
+      </aside>
+      <section class="content">
+        <div id="recall-empty" class="empty">Submit a query to see the trace.</div>
+        <div id="recall-results" hidden></div>
+      </section>
     </section>
 
     <section id="tab-graph" class="tab-panel" role="tabpanel" hidden>
-      <div class="placeholder">
-        <h2>Graph view</h2>
-        <p>Phase 3. Force-directed view of the memory graph. Best for small graphs and screenshots.</p>
-      </div>
+      <aside class="sidebar graph-sidebar">
+        <div class="form-row">
+          <span class="form-label">Node types</span>
+          <div id="graph-type-toggles" class="chip-row toggle-row"></div>
+        </div>
+        <label class="form-row check">
+          <input type="checkbox" id="graph-include-inactive" checked>
+          <span>Include inactive semantics</span>
+        </label>
+        <div class="form-row">
+          <span class="form-label">Layout</span>
+          <select id="graph-layout">
+            <option value="cose">cose (force)</option>
+            <option value="concentric">concentric</option>
+            <option value="breadthfirst">breadth-first</option>
+            <option value="grid">grid</option>
+          </select>
+        </div>
+        <label class="form-row">
+          <span class="form-label">Node limit</span>
+          <input id="graph-node-limit" type="number" min="10" max="5000" step="50" value="500">
+        </label>
+        <div class="form-row btn-row">
+          <button id="graph-refresh" class="btn btn-primary">Refresh</button>
+          <button id="graph-fit" class="btn">Fit</button>
+          <button id="graph-export" class="btn">PNG</button>
+        </div>
+        <div id="graph-counts" class="hint"></div>
+        <div id="graph-legend" class="graph-legend"></div>
+      </aside>
+      <section class="content graph-content">
+        <div id="graph-canvas" class="graph-canvas"></div>
+        <div id="graph-empty" class="empty graph-empty">Pick a graph and click Refresh.</div>
+        <aside id="graph-detail" class="graph-detail-card" hidden>
+          <div class="detail-header">
+            <span id="graph-detail-title" class="detail-title"></span>
+            <button id="graph-detail-close" class="btn btn-ghost" aria-label="Close">×</button>
+          </div>
+          <div id="graph-detail-body" class="detail-body"></div>
+        </aside>
+      </section>
     </section>
   </main>
 
+  <script src="https://unpkg.com/cytoscape@3.30.4/dist/cytoscape.min.js"></script>
   <script type="module" src="app.js"></script>
 </body>
 </html>

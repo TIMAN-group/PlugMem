@@ -180,6 +180,48 @@ class SemanticUpdateRequest(BaseModel):
     is_active: Optional[bool] = None
 
 
+class RecallTraceRequest(BaseModel):
+    observation: str
+    goal: Optional[str] = None
+    subgoal: Optional[str] = None
+    state: Optional[str] = None
+    task_type: str = ""
+    time: str = ""
+    mode: Optional[str] = Field(
+        None,
+        description=(
+            'null/omit (default = semantic_memory unless auto_plan), '
+            '"semantic_memory", "episodic_memory", or "procedural_memory"'
+        ),
+    )
+    query_tags: Optional[List[str]] = Field(
+        None,
+        description="Manual tags to skip the LLM planner. Empty list disables tag voting.",
+    )
+    next_subgoal: Optional[str] = None
+    auto_plan: bool = Field(
+        False,
+        description="If True, fill missing mode/tags/subgoal via the LLM planner (paid).",
+    )
+
+
+class RecallTraceResponse(BaseModel):
+    mode: str
+    plan: Dict[str, Any]
+    trace: Dict[str, Any]
+    selected: Dict[str, List[int]]
+    rendered_prompt: List[Dict[str, str]]
+
+
+class TopologyResponse(BaseModel):
+    graph_id: str
+    nodes: List[Dict[str, Any]]
+    edges: List[Dict[str, Any]]
+    counts: Dict[str, int]
+    truncated: bool
+    node_limit: int
+
+
 # ------------------------------------------------------------------ #
 # Health
 # ------------------------------------------------------------------ #

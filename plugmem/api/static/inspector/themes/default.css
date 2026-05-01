@@ -51,6 +51,10 @@
 
 * { box-sizing: border-box; }
 
+/* `hidden` must beat any `display:` rule below — without this, panels with
+   `display: flex` ignore the attribute and everything renders at once. */
+[hidden] { display: none !important; }
+
 html, body {
   margin: 0;
   padding: 0;
@@ -341,6 +345,170 @@ select:focus, input:focus {
   color: var(--type-color, var(--fg-muted));
   border: 1px solid color-mix(in srgb, var(--type-color, var(--fg-muted)) 35%, transparent);
 }
+
+/* ---------- Recall trace ---------- */
+.recall-form { width: 320px; }
+.form-row { display: flex; flex-direction: column; gap: 4px; margin-bottom: var(--space); }
+.form-row.check { flex-direction: row; align-items: center; gap: 6px; }
+.form-label { color: var(--fg-muted); font-size: var(--fs-small); text-transform: uppercase; letter-spacing: .04em; font-weight: 600; }
+.form-hint { color: var(--fg-faint); text-transform: none; letter-spacing: 0; font-weight: 400; }
+.form-row .req { color: var(--danger); margin-left: 2px; }
+.form-row textarea, .form-row input[type="text"], .form-row select {
+  border: 1px solid var(--border-strong);
+  background: var(--bg-elev);
+  color: var(--fg);
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
+  font-family: inherit;
+  font-size: var(--fs-body);
+  width: 100%;
+}
+.form-row textarea { resize: vertical; font-family: var(--font-mono); font-size: var(--fs-small); }
+details summary { cursor: pointer; color: var(--fg-muted); font-size: var(--fs-small); padding: 4px 0; }
+details[open] summary { margin-bottom: var(--space); }
+
+.recall-section { margin-bottom: calc(var(--space) * 2); }
+.recall-section h3 {
+  font-size: var(--fs-small);
+  text-transform: uppercase;
+  letter-spacing: .05em;
+  color: var(--fg-muted);
+  margin: 0 0 6px;
+}
+.plan-row { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: var(--space); }
+.plan-row .badge.src-llm      { border-color: var(--accent); color: var(--accent); }
+.plan-row .badge.src-override { border-color: var(--node-procedural); color: var(--node-procedural); }
+.plan-row .badge.src-default  { color: var(--fg-faint); }
+
+.score-table {
+  width: 100%;
+  border-collapse: collapse;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  font-size: var(--fs-small);
+  margin-bottom: var(--space);
+}
+.score-table th, .score-table td {
+  padding: 6px 8px;
+  text-align: right;
+  border-bottom: 1px solid var(--border);
+  font-variant-numeric: tabular-nums;
+}
+.score-table th { background: var(--bg); color: var(--fg-muted); font-weight: 600; text-transform: uppercase; letter-spacing: .04em; font-size: 11px; }
+.score-table td.col-text, .score-table th.col-text { text-align: left; max-width: 380px; }
+.score-table td.col-text .cell-text { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.score-table tbody tr.selected td { background: color-mix(in srgb, var(--accent) 8%, var(--bg-elev)); }
+.score-table tbody tr.unselected td { color: var(--fg-faint); }
+.score-table .selected-mark { color: var(--ok); font-weight: 700; }
+
+.prompt-block {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: var(--space);
+  font-family: var(--font-mono);
+  font-size: var(--fs-small);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 360px;
+  overflow: auto;
+}
+.prompt-msg { margin-bottom: var(--space); }
+.prompt-msg .role { color: var(--node-tag); text-transform: uppercase; letter-spacing: .04em; font-weight: 700; font-size: 10px; }
+
+/* ---------- Graph tab ---------- */
+.graph-sidebar { width: 260px; }
+.graph-sidebar .toggle-row .chip { cursor: pointer; }
+.graph-sidebar .chip[aria-pressed="true"] {
+  background: color-mix(in srgb, var(--type-color, var(--accent)) 20%, var(--bg-elev));
+  border-color: var(--type-color, var(--accent));
+  color: var(--fg);
+}
+.graph-sidebar .chip[aria-pressed="false"] {
+  opacity: .6;
+  text-decoration: line-through;
+}
+.btn-row { flex-direction: row !important; gap: 6px !important; }
+.btn-row .btn { flex: 1 1 auto; }
+
+.graph-legend {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: var(--fs-small);
+  color: var(--fg-muted);
+  margin-top: var(--space);
+}
+.graph-legend-row { display: inline-flex; align-items: center; gap: 6px; }
+.graph-legend-swatch {
+  width: 12px; height: 12px; border-radius: 50%;
+  border: 1px solid var(--border-strong);
+}
+.graph-legend-line {
+  display: inline-block;
+  width: 22px;
+  height: 0;
+  border-top: 2px solid var(--fg-muted);
+  flex: 0 0 auto;
+}
+
+.graph-content {
+  position: relative;
+  padding: 0;
+  overflow: hidden;
+  background:
+    radial-gradient(circle at 12px 12px, var(--border) 1px, transparent 1px) 0 0 / 24px 24px,
+    var(--bg);
+}
+.graph-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  min-height: 400px;
+}
+.graph-empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  color: var(--fg-faint);
+}
+.graph-detail-card {
+  position: absolute;
+  top: calc(var(--space) * 1.5);
+  right: calc(var(--space) * 1.5);
+  width: 320px;
+  max-height: calc(100vh - 200px);
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  z-index: 5;
+}
+
+/* ---------- empty banner ---------- */
+.banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: calc(var(--space) * 2);
+  margin: calc(var(--space) * 2);
+  padding: calc(var(--space) * 1.5) calc(var(--space) * 2);
+  border: 1px dashed var(--border-strong);
+  background: color-mix(in srgb, var(--accent) 6%, var(--bg-elev));
+  border-radius: var(--radius);
+  color: var(--fg);
+  font-size: var(--fs-body);
+}
+.banner code { font-family: var(--font-mono); font-size: var(--fs-small); background: var(--bg); padding: 1px 4px; border-radius: 3px; }
 
 /* ---------- toast ---------- */
 .toast {

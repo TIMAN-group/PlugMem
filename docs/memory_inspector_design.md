@@ -317,10 +317,22 @@ and deactivate a semantic fact, with the change persisting in ChromaDB.
 Definition of done: paste an observation, see why each candidate did or
 didn't make the final cut, including its score breakdown.
 
-### Phase 3 — Graph view
-- `GET /topology` endpoint with sensible default limits.
-- `graph.js`: cytoscape integration, node/edge filters, side panel reuse,
-  PNG export.
+### Phase 3 — Graph view *(built)*
+- `GET /topology` endpoint: `include_episodic`, `include_inactive`,
+  `node_limit`, `tag_min_importance`. Returns cytoscape-shaped
+  `{nodes, edges, counts, truncated}`. Edge kinds emitted: `tagged`,
+  `related` (semantic-bro, symmetric and emitted once), `derived_from`
+  (semantic-son), `evidenced_by` (semantic→episodic), `grouped_by`
+  (procedural→subgoal), `from_session` (procedural→episodic). Node IDs
+  are typed: `sem-`, `tag-`, `proc-`, `sg-`, `epis-`. When `node_limit`
+  is exceeded, types share equally then leftover budget goes by priority
+  (semantic > procedural > tag > subgoal > episodic).
+- `graph.js`: cytoscape via CDN (no build), per-type chip toggles
+  (episodic off by default — fetching them requires a refresh; other
+  types are pure client-side show/hide), `cose | concentric |
+  breadthfirst | grid` layouts, neighborhood highlight on tap, side
+  panel via `getNode`, PNG export. Stylesheet reads `--node-*` CSS
+  variables and re-applies on theme change.
 
 ### Phase 4 — Theme system polish + first alternate theme
 - Confirm token coverage by building a deliberately-different theme

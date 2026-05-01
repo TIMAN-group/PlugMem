@@ -6,6 +6,8 @@
 
 import { api, getApiKey, setApiKey } from "./api.js";
 import { mountBrowse } from "./browse.js";
+import { mountRecall } from "./recall.js";
+import { mountGraph } from "./graph.js";
 
 const TABS = ["browse", "recall", "graph"];
 const DEFAULT_TAB = "browse";
@@ -31,6 +33,8 @@ const els = {
   },
   toast: document.getElementById("toast"),
   apiKeyBtn: document.getElementById("api-key-btn"),
+  emptyBanner: document.getElementById("empty-banner"),
+  emptyBannerBtn: document.getElementById("empty-banner-btn"),
 };
 
 let toastTimer = null;
@@ -62,11 +66,16 @@ function writeUrl() {
   history.replaceState(null, "", url);
 }
 
+const themeListeners = [];
+function onTheme(cb) { themeListeners.push(cb); }
+
 function applyTheme(name) {
   state.theme = name;
   els.themeLink.href = `themes/${name}.css`;
   els.themePicker.value = name;
   writeUrl();
+  // Wait one tick so the new stylesheet is applied before listeners read vars.
+  setTimeout(() => { for (const cb of themeListeners) cb(name); }, 50);
 }
 
 function selectTab(name) {
@@ -81,7 +90,17 @@ function selectTab(name) {
   }
   writeUrl();
   if (name === "browse") refreshBrowse();
+  if (name === "graph" && graphHandle) {
+    if (!graphHasLoaded) {
+      graphHasLoaded = true;
+      refreshGraph();
+    } else {
+      graphHandle.relayout();
+    }
+  }
 }
+
+let graphHasLoaded = false;
 
 function renderStats(stats) {
   if (!stats) {
@@ -121,6 +140,7 @@ async function loadGraphs() {
   }
 
   els.graphPicker.innerHTML = "";
+  els.emptyBanner.hidden = state.graphs.length > 0;
   if (state.graphs.length === 0) {
     const opt = document.createElement("option");
     opt.value = "";
@@ -144,9 +164,19 @@ async function loadGraphs() {
 }
 
 let browseHandle = null;
+let recallHandle = null;
+let graphHandle = null;
 function refreshBrowse() {
   if (!browseHandle) return;
   browseHandle.refresh({ graphId: state.graphId });
+}
+function refreshRecall() {
+  if (!recallHandle) return;
+  recallHandle.refresh({ graphId: state.graphId });
+}
+function refreshGraph() {
+  if (!graphHandle) return;
+  graphHandle.refresh({ graphId: state.graphId });
 }
 
 async function onGraphChange(gid) {
@@ -154,6 +184,8 @@ async function onGraphChange(gid) {
   writeUrl();
   await loadStats();
   refreshBrowse();
+  refreshRecall();
+  refreshGraph();
 }
 
 function bindControls() {
@@ -162,6 +194,25 @@ function bindControls() {
   for (const btn of els.tabButtons) {
     btn.addEventListener("click", () => selectTab(btn.dataset.tab));
   }
+  els.emptyBannerBtn.addEventListener("click", async () => {
+    els.emptyBannerBtn.disabled = true;
+    try {
+      const res = await api.seedDemo();
+      toast(`demo graph '${res.graph_id}' loaded`);
+      state.graphId = res.graph_id;
+      await loadGraphs();
+      await loadStats();
+      refreshBrowse();
+      if (state.tab === "graph") {
+        graphHasLoaded = true;
+        refreshGraph();
+      }
+    } catch (err) {
+      toast(`seed: ${err.message}`, "error");
+    } finally {
+      els.emptyBannerBtn.disabled = false;
+    }
+  });
   els.apiKeyBtn.addEventListener("click", () => {
     const cur = getApiKey();
     const next = prompt("X-API-Key (leave blank to clear):", cur);
@@ -182,6 +233,17 @@ async function boot() {
     container: els.tabPanels.browse,
     getGraphId: () => state.graphId,
     toast,
+  });
+  recallHandle = mountRecall({
+    container: els.tabPanels.recall,
+    getGraphId: () => state.graphId,
+    toast,
+  });
+  graphHandle = mountGraph({
+    container: els.tabPanels.graph,
+    getGraphId: () => state.graphId,
+    toast,
+    onTheme,
   });
 
   selectTab(state.tab);

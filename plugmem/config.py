@@ -16,6 +16,7 @@ class PlugMemConfig:
     # Embeddings
     embedding_base_url: str = ""
     embedding_model: str = "nvidia/NV-Embed-v2"
+    embedding_api_key: str = ""  # for auth-gated OpenAI-compatible endpoints
 
     # ChromaDB
     chroma_mode: str = "persistent"  # "persistent" | "http" | "ephemeral"
