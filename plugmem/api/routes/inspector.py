@@ -108,6 +108,7 @@ def _serialize_procedural(n) -> Dict[str, Any]:
         "subgoals": [s.subgoal for s in n.subgoal_nodes] or list(n.subgoals),
         "return": n.Return,
         "time": n.time,
+        "session_id": getattr(n, "session_id", None),
         "n_episodics": len(n.episodic_nodes),
     }
 

@@ -141,6 +141,7 @@ class ProceduralNode:
         embedding: Any = None,
         time: int = 0,
         return_value: float = 0.0,
+        session_id: Optional[str] = None,
     ):
         self.procedural_id = procedural_id
         self.procedural_memory_str = procedural_memory_str
@@ -150,6 +151,7 @@ class ProceduralNode:
         self.time = time
         self.episodic_nodes: List[EpisodicNode] = []
         self.Return = return_value
+        self.session_id = session_id
 
     @property
     def embedding(self) -> Optional[np.ndarray]:

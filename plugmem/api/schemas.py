@@ -63,6 +63,13 @@ class MemoryInsertRequest(BaseModel):
         description='"trajectory" or "structured"',
         pattern="^(trajectory|structured)$",
     )
+    session_id: Optional[str] = Field(
+        None,
+        description=(
+            "Stamps every node created by this insert with the given session id. "
+            "Used by the Sessions view + recall audit log to group nodes by run."
+        ),
+    )
 
     # trajectory mode
     goal: Optional[str] = None
@@ -97,6 +104,10 @@ class RetrieveRequest(BaseModel):
             '"episodic_memory", or "procedural_memory"'
         ),
     )
+    session_id: Optional[str] = Field(
+        None,
+        description="If set, the recall is logged against this session id.",
+    )
 
 
 class RetrieveResponse(BaseModel):
@@ -113,6 +124,10 @@ class ReasonRequest(BaseModel):
     task_type: str = ""
     time: str = ""
     mode: Optional[str] = None
+    session_id: Optional[str] = Field(
+        None,
+        description="If set, the reasoning recall is logged against this session id.",
+    )
 
 
 class ReasonResponse(BaseModel):

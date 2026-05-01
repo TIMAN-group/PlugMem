@@ -437,6 +437,7 @@ class ChromaStorage:
         episodic_ids: Optional[List[int]] = None,
         time: int = 0,
         return_value: float = 0.0,
+        session_id: Optional[str] = None,
     ) -> None:
         metadata: Dict[str, Any] = {
             "procedural_id": procedural_id,
@@ -447,6 +448,8 @@ class ChromaStorage:
         }
         if subgoal_id is not None:
             metadata["subgoal_id"] = subgoal_id
+        if session_id is not None:
+            metadata["session_id"] = session_id
         col = self._col(graph_id, "procedural")
         kwargs: Dict[str, Any] = {
             "ids": [str(procedural_id)],

@@ -235,6 +235,7 @@ class MemoryGraph:
                 embedding=emb,
                 time=meta.get("time", 0),
                 return_value=meta.get("return", 0.0),
+                session_id=meta.get("session_id"),
             )
             self.procedural_nodes.append(node)
             self.procedural_time = max(self.procedural_time, node.time + 1)
@@ -308,6 +309,10 @@ class MemoryGraph:
         """Insert structured memory into the graph and persist to ChromaDB."""
         normalize_memory(memory)
 
+        # session_id stamps every node created by this insert. Used by the
+        # Sessions view + recall audit to group nodes by run.
+        sid: Optional[str] = getattr(memory, "session_id", None)
+
         # 1. Episodic nodes
         episodic_nodes: List[List[EpisodicNode]] = []
         for i, trajectory in enumerate(memory.memory["episodic"]):
@@ -323,12 +328,15 @@ class MemoryGraph:
                     observation=observation,
                     action=action,
                     time=time_val,
+                    session_id=sid,
                     subgoal=step.get("subgoal", "") if isinstance(step, dict) else "",
                     state=step.get("state", "") if isinstance(step, dict) else "",
                     reward=step.get("reward", "") if isinstance(step, dict) else "",
                 )
                 self.episodic_nodes.append(epis_node)
                 episodic_nodes[i].append(epis_node)
+                if sid is not None:
+                    self.session_ids.setdefault(sid, []).append(epis_node)
 
                 self.storage.add_episodic(
                     self.graph_id,
@@ -336,6 +344,7 @@ class MemoryGraph:
                     observation=epis_node.observation,
                     action=epis_node.action,
                     time=epis_node.time,
+                    session_id=sid,
                     subgoal=epis_node.subgoal,
                     state=epis_node.state,
                     reward=epis_node.reward,
@@ -359,6 +368,7 @@ class MemoryGraph:
                 semantic_memory_str=sem_str,
                 embedding=sem_emb_item["semantic_memory"],
                 time=self.semantic_time,
+                session_id=sid,
             )
 
             # Link episodic nodes
@@ -422,6 +432,7 @@ class MemoryGraph:
                 tags=sem_node.tags,
                 tag_ids=[t.tag_id for t in sem_node.tag_nodes],
                 time=sem_node.time,
+                session_id=sid,
                 episodic_ids=[e.episodic_id for e in sem_node.episodic_nodes],
                 bro_semantic_ids=bro_ids,
             )
@@ -467,6 +478,7 @@ class MemoryGraph:
                 embedding=proc_embedding,
                 time=self.procedural_time,
                 return_value=proc_item.get("return", 0.0),
+                session_id=sid,
             )
             traj_num = proc_item.get("trajectory_num", 0)
             if traj_num < len(episodic_nodes):
@@ -489,6 +501,7 @@ class MemoryGraph:
                 subgoal=subgoal_node.subgoal, subgoal_id=subgoal_node.subgoal_id,
                 episodic_ids=[e.episodic_id for e in proc_node.episodic_nodes],
                 time=self.procedural_time, return_value=proc_node.Return,
+                session_id=sid,
             )
             # Persist subgoal
             if is_new_subgoal:
