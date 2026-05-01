@@ -67,12 +67,18 @@ function writeUrl() {
 }
 
 const themeListeners = [];
-function onTheme(cb) { themeListeners.push(cb); }
+function onTheme(cb) {
+  themeListeners.push(cb);
+  // Fire immediately so late-registering listeners (mountGraph runs after
+  // initial applyTheme) get the current theme without an extra event.
+  cb(state.theme);
+}
 
 function applyTheme(name) {
   state.theme = name;
   els.themeLink.href = `themes/${name}.css`;
   els.themePicker.value = name;
+  document.documentElement.dataset.theme = name;
   writeUrl();
   // Wait one tick so the new stylesheet is applied before listeners read vars.
   setTimeout(() => { for (const cb of themeListeners) cb(name); }, 50);

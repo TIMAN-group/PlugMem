@@ -1,11 +1,25 @@
-// Graph tab: cytoscape-rendered topology view.
+// Graph tab: two render modes share one data fetch.
 //
-// Cytoscape is loaded from CDN as a global (`window.cytoscape`) — no module
-// import. This file only runs when the Graph tab is selected.
+// - Network view (default theme): cytoscape force-directed graph, loaded from
+//   CDN as `window.cytoscape`.
+// - Office view (pixel theme): HTML floor plan with five rooms — one per
+//   memory type — capped at OFFICE_PER_ROOM items each so the visual stays
+//   sparse and pixel-readable.
 
 import { api } from "./api.js";
 
 const NODE_TYPES = ["semantic", "procedural", "tag", "subgoal", "episodic"];
+// SVG connector lines between selected and related desks. Disabled
+// because the lines compete visually with the highlighted desks; flip
+// to true to bring them back.
+const SHOW_OFFICE_CONNECTORS = false;
+const OFFICE_DEPARTMENTS = [
+  { type: "semantic",   key: "records",  name: "Records",       sub: "facts the agent remembers" },
+  { type: "procedural", key: "workshop", name: "Workshop",      sub: "procedures and recipes" },
+  { type: "tag",        key: "indexing", name: "Indexing",      sub: "tags that catalog facts" },
+  { type: "subgoal",    key: "strategy", name: "Strategy Room", sub: "subgoals on the board" },
+  { type: "episodic",   key: "archive",  name: "Archive",       sub: "raw observations and actions" },
+];
 
 const EDGE_KINDS = [
   { kind: "tagged",        label: "tagged" },
@@ -152,6 +166,7 @@ export function mountGraph({ container, getGraphId, toast, onTheme }) {
     counts:        container.querySelector("#graph-counts"),
     legend:        container.querySelector("#graph-legend"),
     canvas:        container.querySelector("#graph-canvas"),
+    office:        container.querySelector("#graph-office"),
     empty:         container.querySelector("#graph-empty"),
     detail:        container.querySelector("#graph-detail"),
     detailTitle:   container.querySelector("#graph-detail-title"),
@@ -164,7 +179,11 @@ export function mountGraph({ container, getGraphId, toast, onTheme }) {
     typeActive: { semantic: true, procedural: true, tag: true, subgoal: true, episodic: false },
     cy: null,
     lastPayload: null,
+    theme: "default",
+    selectedDeskKey: null,
   };
+
+  function isPixel() { return state.theme === "pixel"; }
 
   function renderTypeToggles() {
     els.typeRow.innerHTML = "";
@@ -275,8 +294,11 @@ export function mountGraph({ container, getGraphId, toast, onTheme }) {
     els.refresh.disabled = true;
     try {
       const limit = Math.max(10, parseInt(els.nodeLimit.value, 10) || 500);
+      // Office mode always shows all five departments, so episodics
+      // (which power Archive) must be fetched even if the chip is off.
+      const includeEpisodic = isPixel() ? true : !!state.typeActive.episodic;
       const payload = await api.topology(gid, {
-        include_episodic: state.typeActive.episodic ? true : false,
+        include_episodic: includeEpisodic,
         include_inactive: !!els.inactiveCheck.checked,
         node_limit: limit,
       });
@@ -311,6 +333,10 @@ export function mountGraph({ container, getGraphId, toast, onTheme }) {
   }
 
   function drawElements(payload) {
+    if (isPixel()) {
+      renderOffice(payload);
+      return;
+    }
     const cy = ensureCy();
     if (!cy) return;
     const nodes = (payload.nodes || []).map((n) => ({ ...n, group: "nodes" }));
@@ -322,9 +348,184 @@ export function mountGraph({ container, getGraphId, toast, onTheme }) {
     runLayout();
   }
 
+  function renderOffice(payload) {
+    const byType = { semantic: [], procedural: [], tag: [], subgoal: [], episodic: [] };
+    for (const n of payload.nodes || []) {
+      const t = n.data.type;
+      if (t in byType) byType[t].push(n);
+    }
+    const office = els.office;
+    office.innerHTML = "";
+    for (const dept of OFFICE_DEPARTMENTS) {
+      office.appendChild(renderRoom(dept, byType[dept.type]));
+    }
+    if (SHOW_OFFICE_CONNECTORS) {
+      const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+      svg.classList.add("office-connectors");
+      office.appendChild(svg);
+      bindOfficeScrollListeners();
+      drawOfficeConnectors();
+    }
+  }
+
+  let connectorRaf = null;
+  function scheduleConnectorDraw() {
+    if (connectorRaf != null) return;
+    connectorRaf = requestAnimationFrame(() => {
+      connectorRaf = null;
+      drawOfficeConnectors();
+    });
+  }
+
+  function bindOfficeScrollListeners() {
+    for (const floor of els.office.querySelectorAll(".office-floor")) {
+      floor.addEventListener("scroll", scheduleConnectorDraw, { passive: true });
+    }
+  }
+
+  function drawOfficeConnectors() {
+    const svg = els.office.querySelector(".office-connectors");
+    if (!svg) return;
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+
+    const officeRect = els.office.getBoundingClientRect();
+    svg.setAttribute("width", officeRect.width);
+    svg.setAttribute("height", officeRect.height);
+    svg.setAttribute("viewBox", `0 0 ${officeRect.width} ${officeRect.height}`);
+
+    if (!state.selectedDeskKey) return;
+    const source = els.office.querySelector(
+      `.office-desk[data-desk-key="${cssEscape(state.selectedDeskKey)}"]`
+    );
+    const relatedDesks = els.office.querySelectorAll(".office-desk.related");
+    if (!source || !relatedDesks.length) return;
+
+    const stroke = readVar("--accent") || "#c25a32";
+    const sRect = source.getBoundingClientRect();
+    const sx = Math.round(sRect.left + sRect.width / 2 - officeRect.left);
+    const sy = Math.round(sRect.top + sRect.height / 2 - officeRect.top);
+
+    // Draw a chunky knot at the source first so it sits under the lines.
+    const knot = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+    knot.setAttribute("x", sx - 4);
+    knot.setAttribute("y", sy - 4);
+    knot.setAttribute("width", 8);
+    knot.setAttribute("height", 8);
+    knot.setAttribute("fill", stroke);
+    svg.appendChild(knot);
+
+    for (const desk of relatedDesks) {
+      const r = desk.getBoundingClientRect();
+      const tx = Math.round(r.left + r.width / 2 - officeRect.left);
+      const ty = Math.round(r.top + r.height / 2 - officeRect.top);
+
+      const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+      line.setAttribute("x1", sx);
+      line.setAttribute("y1", sy);
+      line.setAttribute("x2", tx);
+      line.setAttribute("y2", ty);
+      line.setAttribute("stroke", stroke);
+      line.setAttribute("stroke-width", "3");
+      line.setAttribute("stroke-dasharray", "5 4");
+      line.setAttribute("opacity", "0.85");
+      svg.appendChild(line);
+
+      // Small marker at the target end so the line reads as terminating
+      // *at* the desk rather than passing through it.
+      const cap = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+      cap.setAttribute("x", tx - 3);
+      cap.setAttribute("y", ty - 3);
+      cap.setAttribute("width", 6);
+      cap.setAttribute("height", 6);
+      cap.setAttribute("fill", stroke);
+      svg.appendChild(cap);
+    }
+  }
+
+  function cssEscape(s) {
+    if (window.CSS && typeof window.CSS.escape === "function") return window.CSS.escape(s);
+    return String(s).replace(/[^a-zA-Z0-9_-]/g, (c) => "\\" + c);
+  }
+
+  function renderRoom(dept, items) {
+    const room = document.createElement("div");
+    room.className = `office-room type-${dept.type} ${dept.key}`;
+
+    const header = document.createElement("div");
+    header.className = "office-room-header";
+    const left = document.createElement("div");
+    const name = document.createElement("div");
+    name.className = "office-room-name";
+    name.textContent = dept.name;
+    left.appendChild(name);
+    const sub = document.createElement("div");
+    sub.className = "office-room-sub";
+    sub.textContent = dept.sub;
+    left.appendChild(sub);
+    header.appendChild(left);
+
+    const count = document.createElement("span");
+    count.className = `office-room-count type-${dept.type}`;
+    count.textContent = String(items.length);
+    header.appendChild(count);
+    room.appendChild(header);
+
+    const floor = document.createElement("div");
+    floor.className = "office-floor";
+
+    if (items.length === 0) {
+      const empty = document.createElement("div");
+      empty.className = "office-empty";
+      empty.textContent = "(empty)";
+      floor.appendChild(empty);
+    } else {
+      // Render all items; the room scrolls internally if they overflow.
+      for (const node of items) floor.appendChild(renderDesk(node, dept));
+    }
+    room.appendChild(floor);
+
+    const label = document.createElement("div");
+    label.className = "office-floor-title";
+    label.textContent = `[${dept.type}]`;
+    room.appendChild(label);
+    return room;
+  }
+
+  function renderDesk(node, dept) {
+    const data = node.data;
+    const desk = document.createElement("button");
+    desk.type = "button";
+    desk.className = `office-desk type-${data.type}`;
+    if (typeof node.classes === "string" && node.classes.includes("inactive")) {
+      desk.classList.add("inactive");
+    }
+    const key = `${data.type}-${data.node_id}`;
+    desk.dataset.deskKey = key;
+    const id = document.createElement("span");
+    id.className = "desk-id";
+    id.textContent = `#${data.node_id}`;
+    desk.appendChild(id);
+    const lbl = document.createElement("span");
+    lbl.className = "desk-label";
+    lbl.textContent = data.label || "(no text)";
+    desk.appendChild(lbl);
+    desk.title = data.label || "";
+    if (state.selectedDeskKey === key) desk.classList.add("selected");
+    desk.addEventListener("click", () => {
+      state.selectedDeskKey = key;
+      els.office.querySelectorAll(".office-desk").forEach((d) => {
+        d.classList.remove("selected", "related");
+      });
+      desk.classList.add("selected");
+      void showDetailFor(data.type, data.node_id);
+    });
+    return desk;
+  }
+
   function runLayout() {
     const cy = state.cy;
     if (!cy) return;
+    cy.resize();
     const visible = cy.elements(":visible");
     if (visible.length === 0) return;
     visible.layout(layoutOptions(els.layoutSel.value)).run();
@@ -348,27 +549,51 @@ export function mountGraph({ container, getGraphId, toast, onTheme }) {
 
   async function openDetail(node) {
     highlightNeighborhood(node);
+    await showDetailFor(node.data("type"), node.data("node_id"));
+  }
+
+  async function showDetailFor(type, nodeId) {
     els.detail.hidden = false;
-    const data = node.data();
     els.detailTitle.innerHTML = "";
     const pill = document.createElement("span");
-    pill.className = `node-id-pill type-${data.type}`;
-    pill.textContent = `#${data.node_id}`;
+    pill.className = `node-id-pill type-${type}`;
+    pill.textContent = `#${nodeId}`;
     els.detailTitle.appendChild(pill);
     const sub = document.createElement("span");
     sub.style.marginLeft = "8px";
-    sub.textContent = data.type;
+    sub.textContent = type;
     els.detailTitle.appendChild(sub);
-
     els.detailBody.innerHTML = "<p class='hint'>Loading…</p>";
     const gid = getGraphId();
     if (!gid) return;
     try {
-      const res = await api.getNode(gid, data.type, data.node_id);
+      const res = await api.getNode(gid, type, nodeId);
       renderDetail(res);
+      if (isPixel()) highlightOfficeRelated(res);
     } catch (err) {
       els.detailBody.innerHTML = `<p class='hint'>error: ${escapeHtml(err.message)}</p>`;
     }
+  }
+
+  function highlightOfficeRelated(res) {
+    const related = new Set();
+    for (const list of Object.values(res.edges || {})) {
+      if (!Array.isArray(list)) continue;
+      for (const item of list) {
+        related.add(`${inferEdgeType(item)}-${item.id}`);
+      }
+    }
+    const desks = els.office.querySelectorAll(".office-desk");
+    desks.forEach((d) => d.classList.remove("related"));
+    for (const desk of desks) {
+      if (related.has(desk.dataset.deskKey)) {
+        desk.classList.add("related");
+        // Bring into view inside the desk's own scrollable floor — only
+        // scrolls if the desk is currently clipped.
+        desk.scrollIntoView({ block: "nearest", inline: "nearest" });
+      }
+    }
+    drawOfficeConnectors();
   }
 
   function renderDetail(res) {
@@ -530,12 +755,34 @@ export function mountGraph({ container, getGraphId, toast, onTheme }) {
     closeDetail();
   });
 
+  function applyMode() {
+    // pixel.css already hides .graph-canvas; office div needs explicit toggle.
+    els.office.hidden = !isPixel();
+    // Hide network-only sidebar controls in pixel mode — they're inert.
+    els.layoutSel.parentElement.style.display = isPixel() ? "none" : "";
+    els.fit.style.display = isPixel() ? "none" : "";
+    els.exportBtn.style.display = isPixel() ? "none" : "";
+    els.legend.style.display = isPixel() ? "none" : "";
+    // Type chips are inert in office view (each room shows one type, and
+    // closing/opening rooms doesn't match the office metaphor).
+    els.typeRow.parentElement.style.display = isPixel() ? "none" : "";
+  }
+
   if (typeof onTheme === "function") {
-    onTheme(() => {
+    onTheme((name) => {
+      state.theme = name || "default";
+      applyMode();
       renderLegend();
-      if (!state.cy) return;
-      state.cy.style(buildStylesheet());
+      if (state.lastPayload) drawElements(state.lastPayload);
+      if (!isPixel() && state.cy) state.cy.style(buildStylesheet());
     });
+  }
+  applyMode();
+
+  window.addEventListener("resize", scheduleConnectorDraw);
+  if (typeof ResizeObserver === "function") {
+    const ro = new ResizeObserver(scheduleConnectorDraw);
+    ro.observe(els.office);
   }
 
   return {

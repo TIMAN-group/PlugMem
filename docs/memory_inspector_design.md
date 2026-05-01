@@ -334,10 +334,20 @@ didn't make the final cut, including its score breakdown.
   panel via `getNode`, PNG export. Stylesheet reads `--node-*` CSS
   variables and re-applies on theme change.
 
-### Phase 4 — Theme system polish + first alternate theme
-- Confirm token coverage by building a deliberately-different theme
-  (e.g. high-contrast or pixel-art).
-- Document the token contract in `docs/memory_inspector_theming.md`.
+### Phase 4 — Theme system polish + first alternate theme *(built)*
+- `themes/pixel.css` ships as the first alternate theme: chunky borders,
+  retro palette, Press Start 2P + VT323 fonts, no border-radius. Confirms
+  the token contract holds across the inspector — no JS changes were
+  needed for any tab except Graph.
+- The Graph tab gains an **Office** floor-plan view that activates with
+  the pixel theme: five departments (Records / Workshop / Indexing /
+  Strategy Room / Archive) corresponding to the five memory types, each
+  rendering at most `OFFICE_PER_ROOM=6` newest items as desk sprites.
+  This is a deliberate constraint — pixel-art aesthetics and a hairball
+  network view don't compose, so density is capped and items overflowing
+  the cap are surfaced via a "+N more" placeholder pointing to Browse.
+- Network and Office share `/topology`, the detail panel, and the type
+  toggles; only the renderer differs.
 
 ### Phase 5 (later, optional) — Session timeline
 - Filter nodes by `session_id`, sort by time, render a vertical timeline.

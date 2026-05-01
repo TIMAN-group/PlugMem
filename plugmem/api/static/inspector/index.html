@@ -4,6 +4,9 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>PlugMem — Memory Inspector</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=VT323&display=swap">
   <link id="theme-link" rel="stylesheet" href="themes/default.css">
 </head>
 <body>
@@ -21,6 +24,7 @@
         <span class="field-label">Theme</span>
         <select id="theme-picker">
           <option value="default">default</option>
+          <option value="pixel">pixel office</option>
         </select>
       </label>
       <button id="api-key-btn" class="btn btn-ghost" title="Set X-API-Key">key</button>
@@ -150,6 +154,7 @@
       </aside>
       <section class="content graph-content">
         <div id="graph-canvas" class="graph-canvas"></div>
+        <div id="graph-office" class="graph-office" hidden></div>
         <div id="graph-empty" class="empty graph-empty">Pick a graph and click Refresh.</div>
         <aside id="graph-detail" class="graph-detail-card" hidden>
           <div class="detail-header">
