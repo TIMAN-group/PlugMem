@@ -76,4 +76,11 @@ export const api = {
     request("GET", `/graphs/${encodeURIComponent(gid)}/topology`, {
       query: { include_episodic, include_inactive, node_limit, tag_min_importance },
     }),
+  listSessions: (gid) =>
+    request("GET", `/graphs/${encodeURIComponent(gid)}/sessions`),
+  sessionTimeline: (gid, sessionId) =>
+    request(
+      "GET",
+      `/graphs/${encodeURIComponent(gid)}/sessions/${encodeURIComponent(sessionId)}`,
+    ),
 };

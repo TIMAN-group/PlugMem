@@ -8,8 +8,9 @@ import { api, getApiKey, setApiKey } from "./api.js";
 import { mountBrowse } from "./browse.js";
 import { mountRecall } from "./recall.js";
 import { mountGraph } from "./graph.js";
+import { mountSessions } from "./sessions.js";
 
-const TABS = ["browse", "recall", "graph"];
+const TABS = ["browse", "recall", "graph", "sessions"];
 const DEFAULT_TAB = "browse";
 
 const state = {
@@ -30,6 +31,7 @@ const els = {
     browse: document.getElementById("tab-browse"),
     recall: document.getElementById("tab-recall"),
     graph: document.getElementById("tab-graph"),
+    sessions: document.getElementById("tab-sessions"),
   },
   toast: document.getElementById("toast"),
   apiKeyBtn: document.getElementById("api-key-btn"),
@@ -104,9 +106,16 @@ function selectTab(name) {
       graphHandle.relayout();
     }
   }
+  if (name === "sessions" && sessionsHandle) {
+    if (!sessionsHasLoaded) {
+      sessionsHasLoaded = true;
+      refreshSessions();
+    }
+  }
 }
 
 let graphHasLoaded = false;
+let sessionsHasLoaded = false;
 
 function renderStats(stats) {
   if (!stats) {
@@ -172,6 +181,7 @@ async function loadGraphs() {
 let browseHandle = null;
 let recallHandle = null;
 let graphHandle = null;
+let sessionsHandle = null;
 function refreshBrowse() {
   if (!browseHandle) return;
   browseHandle.refresh({ graphId: state.graphId });
@@ -184,6 +194,10 @@ function refreshGraph() {
   if (!graphHandle) return;
   graphHandle.refresh({ graphId: state.graphId });
 }
+function refreshSessions() {
+  if (!sessionsHandle) return;
+  sessionsHandle.refresh({ graphId: state.graphId });
+}
 
 async function onGraphChange(gid) {
   state.graphId = gid || null;
@@ -192,6 +206,7 @@ async function onGraphChange(gid) {
   refreshBrowse();
   refreshRecall();
   refreshGraph();
+  if (state.tab === "sessions") refreshSessions();
 }
 
 function bindControls() {
@@ -250,6 +265,11 @@ async function boot() {
     getGraphId: () => state.graphId,
     toast,
     onTheme,
+  });
+  sessionsHandle = mountSessions({
+    container: els.tabPanels.sessions,
+    getGraphId: () => state.graphId,
+    toast,
   });
 
   selectTab(state.tab);

@@ -35,6 +35,7 @@
     <button class="tab" data-tab="browse" role="tab">Browse</button>
     <button class="tab" data-tab="recall" role="tab">Recall trace</button>
     <button class="tab" data-tab="graph" role="tab">Graph</button>
+    <button class="tab" data-tab="sessions" role="tab">Sessions</button>
   </nav>
 
   <div id="toast" class="toast" hidden></div>
@@ -162,6 +163,29 @@
             <button id="graph-detail-close" class="btn btn-ghost" aria-label="Close">×</button>
           </div>
           <div id="graph-detail-body" class="detail-body"></div>
+        </aside>
+      </section>
+    </section>
+  </main>
+
+    <section id="tab-sessions" class="tab-panel" role="tabpanel" hidden>
+      <aside class="sidebar sessions-sidebar">
+        <div class="form-row">
+          <span class="form-label">Sessions</span>
+          <div id="sessions-list" class="sessions-list"></div>
+          <div id="sessions-empty" class="hint" hidden>No sessions yet.</div>
+        </div>
+      </aside>
+      <section class="content sessions-content">
+        <div id="sessions-header" class="sessions-header" hidden></div>
+        <div id="sessions-timeline" class="sessions-timeline"></div>
+        <div id="sessions-placeholder" class="empty">Pick a session.</div>
+        <aside id="sessions-detail" class="graph-detail-card" hidden>
+          <div class="detail-header">
+            <span id="sessions-detail-title" class="detail-title"></span>
+            <button id="sessions-detail-close" class="btn btn-ghost" aria-label="Close">×</button>
+          </div>
+          <div id="sessions-detail-body" class="detail-body"></div>
         </aside>
       </section>
     </section>

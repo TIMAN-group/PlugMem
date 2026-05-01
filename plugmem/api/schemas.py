@@ -272,6 +272,46 @@ class SessionListResponse(BaseModel):
     sessions: List[str]
 
 
+class SessionEvent(BaseModel):
+    """One row in the chronological session view.
+
+    Two flavours: ``kind="insert"`` (a node was created) and
+    ``kind="recall"`` (a /retrieve, /reason, or /recall_trace fired).
+    Both carry ``time`` so the frontend sorts on a unified axis; nodes
+    use the graph's monotonic time counter, recalls use ``graph_time``
+    captured when the recall was logged.
+    """
+    kind: str
+    time: int
+    # insert fields
+    node_type: Optional[str] = None
+    node_id: Optional[int] = None
+    label: Optional[str] = None
+    text: Optional[str] = None
+    is_active: Optional[bool] = None
+    credibility: Optional[int] = None
+    return_value: Optional[float] = None
+    subgoal: Optional[str] = None
+    # recall fields
+    endpoint: Optional[str] = None
+    recall_id: Optional[int] = None
+    ts: Optional[str] = None
+    observation: Optional[str] = None
+    mode: Optional[str] = None
+    next_subgoal: Optional[str] = None
+    query_tags: List[str] = Field(default_factory=list)
+    selected_semantic_ids: List[int] = Field(default_factory=list)
+    selected_procedural_ids: List[int] = Field(default_factory=list)
+    n_messages: Optional[int] = None
+
+
+class SessionTimelineResponse(BaseModel):
+    graph_id: str
+    session_id: str
+    count: int
+    events: List[SessionEvent]
+
+
 # ------------------------------------------------------------------ #
 # Health
 # ------------------------------------------------------------------ #

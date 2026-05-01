@@ -123,3 +123,68 @@ def test_sessions_endpoint_lists_distinct_session_ids(client):
     sessions = resp.json()["sessions"]
     assert "run-X" in sessions
     assert "run-Y" in sessions
+
+
+def test_session_timeline_merges_inserts_and_recalls(client):
+    """Timeline returns inserts + recalls for a session, sorted by time."""
+    client.post("/api/v1/graphs", json={"graph_id": "tl_test"})
+    # Insert 2 semantics under run-A
+    client.post("/api/v1/graphs/tl_test/memories", json={
+        "mode": "structured",
+        "session_id": "run-A",
+        "semantic": [
+            {"semantic_memory": "first fact", "tags": ["t1"]},
+            {"semantic_memory": "second fact", "tags": ["t1"]},
+        ],
+    })
+    # Run a recall under the same session
+    client.post("/api/v1/graphs/tl_test/retrieve", json={
+        "observation": "tell me about facts",
+        "mode": "semantic_memory",
+        "session_id": "run-A",
+    })
+    # Insert one node under a different session — must NOT appear in run-A timeline
+    client.post("/api/v1/graphs/tl_test/memories", json={
+        "mode": "structured",
+        "session_id": "run-B",
+        "semantic": [{"semantic_memory": "other session", "tags": []}],
+    })
+
+    resp = client.get("/api/v1/graphs/tl_test/sessions/run-A")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["session_id"] == "run-A"
+    assert data["count"] == 3, f"expected 2 inserts + 1 recall, got {data['count']}"
+
+    kinds = [e["kind"] for e in data["events"]]
+    assert kinds.count("insert") == 2
+    assert kinds.count("recall") == 1
+
+    # Recall must reference the inserts via selected_semantic_ids
+    recall = next(e for e in data["events"] if e["kind"] == "recall")
+    assert recall["endpoint"] == "retrieve"
+    assert recall["mode"] == "semantic_memory"
+
+    # No leakage from run-B
+    texts = [e.get("text", "") for e in data["events"] if e["kind"] == "insert"]
+    assert not any("other session" in t for t in texts)
+
+
+def test_session_timeline_sorted_inserts_before_recalls_at_same_time(client):
+    """An insert at time t and a recall at the same graph_time should
+    sort insert-first so the timeline reads chronologically."""
+    client.post("/api/v1/graphs", json={"graph_id": "tl_order"})
+    client.post("/api/v1/graphs/tl_order/memories", json={
+        "mode": "structured",
+        "session_id": "run-Z",
+        "semantic": [{"semantic_memory": "fact at t0", "tags": []}],
+    })
+    client.post("/api/v1/graphs/tl_order/retrieve", json={
+        "observation": "anything",
+        "mode": "semantic_memory",
+        "session_id": "run-Z",
+    })
+    events = client.get("/api/v1/graphs/tl_order/sessions/run-Z").json()["events"]
+    # First event must be the insert (graph_time=0), second the recall.
+    assert events[0]["kind"] == "insert"
+    assert events[-1]["kind"] == "recall"

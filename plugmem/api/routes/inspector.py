@@ -15,7 +15,9 @@ from plugmem.api.schemas import (
     RecallTraceResponse,
     SearchResponse,
     SemanticUpdateRequest,
+    SessionEvent,
     SessionListResponse,
+    SessionTimelineResponse,
     TopologyResponse,
 )
 from plugmem.graph_manager import GraphManager
@@ -600,3 +602,108 @@ async def list_sessions(graph_id: str) -> SessionListResponse:
     _get_graph(graph_id)  # 404 if missing
     sessions = _manager().storage.list_sessions(graph_id)
     return SessionListResponse(graph_id=graph_id, sessions=sessions)
+
+
+def _coerce_int_time(t: Any) -> int:
+    if isinstance(t, int):
+        return t
+    try:
+        return int(t)
+    except (TypeError, ValueError):
+        return 0
+
+
+@router.get(
+    "/{graph_id}/sessions/{session_id}",
+    response_model=SessionTimelineResponse,
+)
+async def get_session_timeline(
+    graph_id: str,
+    session_id: str,
+) -> SessionTimelineResponse:
+    """Chronological merge of inserts + recalls for one session.
+
+    Sorted by time ascending. Inserts come before recalls at the same
+    time (the recall reads what the insert just produced).
+    """
+    graph = _get_graph(graph_id)
+    events: List[Dict[str, Any]] = []
+
+    for n in graph.episodic_nodes:
+        if getattr(n, "session_id", None) != session_id:
+            continue
+        text = "\n".join(s for s in (n.observation, n.action) if s)
+        events.append({
+            "kind": "insert",
+            "node_type": "episodic",
+            "node_id": n.episodic_id,
+            "time": _coerce_int_time(n.time),
+            "label": _short_event_text(n.observation or n.action or "(empty)"),
+            "text": text,
+            "subgoal": n.subgoal or None,
+        })
+
+    for n in graph.semantic_nodes:
+        if getattr(n, "session_id", None) != session_id:
+            continue
+        events.append({
+            "kind": "insert",
+            "node_type": "semantic",
+            "node_id": n.semantic_id,
+            "time": _coerce_int_time(n.time),
+            "label": _short_event_text(n.get_semantic_memory()),
+            "text": n.get_semantic_memory(),
+            "is_active": n.is_active,
+            "credibility": getattr(n, "Credibility", 10),
+        })
+
+    for n in graph.procedural_nodes:
+        if getattr(n, "session_id", None) != session_id:
+            continue
+        events.append({
+            "kind": "insert",
+            "node_type": "procedural",
+            "node_id": n.procedural_id,
+            "time": _coerce_int_time(n.time),
+            "label": _short_event_text(n.get_procedural_memory()),
+            "text": n.get_procedural_memory(),
+            "return_value": n.Return,
+        })
+
+    for r in graph.storage.list_recalls(graph_id, session_id=session_id, limit=10_000):
+        events.append({
+            "kind": "recall",
+            "endpoint": r.get("endpoint"),
+            "recall_id": r.get("recall_id"),
+            "time": _coerce_int_time(r.get("graph_time", 0)),
+            "ts": r.get("ts"),
+            "observation": r.get("observation", ""),
+            "mode": r.get("mode", ""),
+            "next_subgoal": r.get("next_subgoal", "") or "",
+            "query_tags": r.get("query_tags", []) or [],
+            "selected_semantic_ids": r.get("selected_semantic_ids", []) or [],
+            "selected_procedural_ids": r.get("selected_procedural_ids", []) or [],
+            "n_messages": r.get("n_messages", 0),
+        })
+
+    # Sort: time asc, then insert-before-recall, then by id for stability.
+    def _sort_key(e: Dict[str, Any]):
+        kind_rank = 0 if e["kind"] == "insert" else 1
+        ident = e.get("node_id") if e["kind"] == "insert" else e.get("recall_id")
+        return (e["time"], kind_rank, ident or 0)
+
+    events.sort(key=_sort_key)
+
+    return SessionTimelineResponse(
+        graph_id=graph_id,
+        session_id=session_id,
+        count=len(events),
+        events=[SessionEvent(**e) for e in events],
+    )
+
+
+def _short_event_text(s: str, n: int = 100) -> str:
+    if not s:
+        return ""
+    s = s.strip().replace("\n", " ")
+    return s if len(s) <= n else s[: n - 1] + "…"
