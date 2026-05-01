@@ -539,6 +539,7 @@ class ChromaStorage:
         selected_semantic_ids: Optional[List[int]] = None,
         selected_procedural_ids: Optional[List[int]] = None,
         n_messages: int = 0,
+        embedding: Optional[List[float]] = None,
     ) -> int:
         """Append one recall to the audit log. Returns the assigned recall_id."""
         col = self._recall_col(graph_id)
@@ -562,11 +563,14 @@ class ChromaStorage:
         }
         if session_id is not None:
             metadata["session_id"] = session_id
-        col.add(
-            ids=[str(recall_id)],
-            documents=[observation or ""],
-            metadatas=[metadata],
-        )
+        kwargs: Dict[str, Any] = {
+            "ids": [str(recall_id)],
+            "documents": [observation or ""],
+            "metadatas": [metadata],
+        }
+        if embedding is not None:
+            kwargs["embeddings"] = [_to_list(embedding)]
+        col.add(**kwargs)
         return recall_id
 
     def list_recalls(

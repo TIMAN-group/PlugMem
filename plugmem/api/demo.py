@@ -96,28 +96,172 @@ SUBGOALS: List[tuple] = [
     (3, "plan a Paris trip",      4),
 ]
 
-# (procedural_id, text, subgoal_id, return_value, time)
+# (procedural_id, text, subgoal_id, return_value, time, session_id)
 PROCEDURALS: List[tuple] = [
     (0, "Define route in routers/, add Pydantic request/response models in "
         "schemas/, register the router in main.py, write 2 pytest cases "
         "(happy path + 401 unauthorized), tag the OpenAPI section.",
-        0, 1.0, 1),
+        0, 1.0, 1, "session-002"),
     (1, "Identify the race in the async fixture (yield order vs event loop), "
         "switch to anyio markers, rerun with pytest-rerunfailures to confirm "
         "stability over 50 iterations.",
-        1, 0.8, 2),
+        1, 0.8, 2, "session-001"),
     (2, "Bump version in pyproject.toml, push annotated tag v0.x.y, GH Action "
         "builds the image, then `helm upgrade --install acme-api ./chart -n "
         "staging` and smoke-test /healthz.",
-        2, 1.0, 3),
+        2, 1.0, 3, "session-004"),
     (3, "Push directly to main without bumping the tag — caused an image "
         "rebuild loop in staging. Manual rollback to previous tag, opened "
         "post-mortem incident-042. Do not repeat.",
-        2, 0.2, 3),
+        2, 0.2, 3, "session-004"),
     (4, "Book SNCF train Paris→Lyon on TGV INOUI 2nd class, reserve hotel "
         "near Gare de Lyon, draft a 4-day itinerary with one day-trip to "
         "Versailles.",
-        3, 0.9, 4),
+        3, 0.9, 4, "session-005"),
+]
+
+# Recall audit log — what the agent asked about during each session.
+# Cross-session lookups are intentional (e.g. session-003 retrieves the
+# deactivated cookie-auth semantic from session-001 while migrating to JWT)
+# so the Sessions view has interesting things to show.
+RECALLS: List[Dict] = [
+    # session-001: debugging flaky pytest
+    {
+        "endpoint": "retrieve",
+        "ts": "2026-03-15T09:12:33+00:00",
+        "session_id": "session-001",
+        "observation": "tests timing out at 30s with anyio backend",
+        "mode": "semantic_memory",
+        "query_tags": ["pytest", "python"],
+        "selected_sids": [1, 2],
+        "selected_pids": [],
+        "n_messages": 4,
+        "graph_time": 1,
+    },
+    {
+        "endpoint": "reason",
+        "ts": "2026-03-15T09:34:18+00:00",
+        "session_id": "session-001",
+        "observation": "what's the procedure for fixing flaky pytest fixtures?",
+        "mode": "procedural_memory",
+        "query_tags": ["pytest"],
+        "selected_sids": [],
+        "selected_pids": [1],
+        "n_messages": 5,
+        "graph_time": 2,
+    },
+    # session-002: adding the /users endpoint
+    {
+        "endpoint": "retrieve",
+        "ts": "2026-03-17T14:08:02+00:00",
+        "session_id": "session-002",
+        "observation": "convention for adding a new FastAPI route",
+        "mode": "procedural_memory",
+        "query_tags": ["fastapi", "conventions"],
+        "selected_sids": [0, 5, 7, 12],
+        "selected_pids": [0],
+        "n_messages": 5,
+        "graph_time": 3,
+    },
+    {
+        "endpoint": "retrieve",
+        "ts": "2026-03-17T14:55:41+00:00",
+        "session_id": "session-002",
+        "observation": "Pydantic version and stack details for acme-api",
+        "mode": "semantic_memory",
+        "query_tags": ["fastapi", "python"],
+        "selected_sids": [0, 1, 2],
+        "selected_pids": [],
+        "n_messages": 4,
+        "graph_time": 4,
+    },
+    # session-003: switching from cookies to JWT — pulls a deactivated fact
+    {
+        "endpoint": "retrieve",
+        "ts": "2026-03-22T10:45:00+00:00",
+        "session_id": "session-003",
+        "observation": "what was our previous auth setup?",
+        "mode": "semantic_memory",
+        "query_tags": ["auth"],
+        "selected_sids": [4],  # the deactivated cookie-auth fact
+        "selected_pids": [],
+        "n_messages": 4,
+        "graph_time": 5,
+    },
+    {
+        "endpoint": "reason",
+        "ts": "2026-03-22T11:20:51+00:00",
+        "session_id": "session-003",
+        "observation": "how do I migrate an auth module from cookies to JWT bearer?",
+        "mode": "semantic_memory",
+        "query_tags": ["auth", "fastapi"],
+        "selected_sids": [3, 4],
+        "selected_pids": [],
+        "n_messages": 5,
+        "graph_time": 6,
+    },
+    # session-004: staging deploy + post-mortem
+    {
+        "endpoint": "retrieve",
+        "ts": "2026-03-25T16:02:14+00:00",
+        "session_id": "session-004",
+        "observation": "what's the deploy process for staging?",
+        "mode": "procedural_memory",
+        "query_tags": ["deployment"],
+        "selected_sids": [8, 11],
+        "selected_pids": [2],
+        "n_messages": 5,
+        "graph_time": 7,
+    },
+    {
+        "endpoint": "retrieve",
+        "ts": "2026-03-25T16:48:09+00:00",
+        "session_id": "session-004",
+        "observation": "where is the health check endpoint?",
+        "mode": "semantic_memory",
+        "query_tags": ["fastapi", "conventions"],
+        "selected_sids": [16],
+        "selected_pids": [],
+        "n_messages": 4,
+        "graph_time": 8,
+    },
+    {
+        "endpoint": "reason",
+        "ts": "2026-03-25T18:22:07+00:00",
+        "session_id": "session-004",
+        "observation": "should I push to main without bumping the tag?",
+        "mode": "procedural_memory",
+        "query_tags": ["deployment"],
+        "selected_sids": [],
+        "selected_pids": [2, 3],  # surfaces both the right way and the cautionary one
+        "n_messages": 5,
+        "graph_time": 9,
+    },
+    # session-005: Paris trip — domain-mixed
+    {
+        "endpoint": "retrieve",
+        "ts": "2026-04-02T19:11:55+00:00",
+        "session_id": "session-005",
+        "observation": "user travel preferences",
+        "mode": "semantic_memory",
+        "query_tags": ["user-preference", "travel"],
+        "selected_sids": [13, 15],
+        "selected_pids": [],
+        "n_messages": 4,
+        "graph_time": 10,
+    },
+    {
+        "endpoint": "reason",
+        "ts": "2026-04-02T19:30:42+00:00",
+        "session_id": "session-005",
+        "observation": "Paris to Lyon: train or plane?",
+        "mode": "procedural_memory",
+        "query_tags": ["travel", "france"],
+        "selected_sids": [15],
+        "selected_pids": [4],
+        "n_messages": 5,
+        "graph_time": 11,
+    },
 ]
 
 # (episodic_id, observation, action, time, session_id, subgoal_text)
@@ -286,7 +430,7 @@ def seed_demo_graph(
         )
 
     # 5. Procedurals
-    for pid, text, sg_id, ret, t in PROCEDURALS:
+    for pid, text, sg_id, ret, t, session_id in PROCEDURALS:
         sg_text = next(s[1] for s in SUBGOALS if s[0] == sg_id)
         storage.add_procedural(
             graph_id,
@@ -298,6 +442,27 @@ def seed_demo_graph(
             episodic_ids=_episodics_for_subgoal(sg_text),
             time=t,
             return_value=ret,
+            session_id=session_id,
+        )
+
+    # 6. Recall audit log — what the agent looked up during each session.
+    # Demonstrates cross-session retrieval (e.g. session-003 surfacing the
+    # deactivated cookie-auth fact from session-001) so the Sessions view
+    # has interesting things to show.
+    for entry in RECALLS:
+        storage.add_recall(
+            graph_id,
+            endpoint=entry["endpoint"],
+            ts=entry["ts"],
+            graph_time=entry.get("graph_time", 0),
+            session_id=entry["session_id"],
+            observation=entry["observation"],
+            mode=entry["mode"],
+            query_tags=entry.get("query_tags", []),
+            selected_semantic_ids=entry.get("selected_sids", []),
+            selected_procedural_ids=entry.get("selected_pids", []),
+            n_messages=entry.get("n_messages", 0),
+            embedding=embed(entry["observation"]),
         )
 
     return storage.get_graph_stats(graph_id)
