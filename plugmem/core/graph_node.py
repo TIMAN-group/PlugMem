@@ -68,6 +68,8 @@ class SemanticNode:
         session_id: Optional[str] = None,
         date: str = "",
         credibility: int = 10,
+        source: Optional[str] = None,
+        confidence: float = 0.5,
     ):
         self.semantic_id = semantic_id
         self.semantic_memory_str = semantic_memory_str
@@ -83,6 +85,8 @@ class SemanticNode:
         self.son_semantic: List[SemanticNode] = son or []
         self.session_id = session_id
         self.date = date
+        self.source = source
+        self.confidence = confidence
 
     @property
     def embedding(self) -> Optional[np.ndarray]:
@@ -141,6 +145,8 @@ class ProceduralNode:
         embedding: Any = None,
         time: int = 0,
         return_value: float = 0.0,
+        source: Optional[str] = None,
+        confidence: float = 0.5,
         session_id: Optional[str] = None,
     ):
         self.procedural_id = procedural_id
@@ -151,6 +157,8 @@ class ProceduralNode:
         self.time = time
         self.episodic_nodes: List[EpisodicNode] = []
         self.Return = return_value
+        self.source = source
+        self.confidence = confidence
         self.session_id = session_id
 
     @property

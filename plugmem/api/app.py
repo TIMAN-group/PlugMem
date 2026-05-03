@@ -10,7 +10,7 @@ from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from plugmem import __version__
-from plugmem.api.routes import demo, graphs, health, inspector, memories, retrieval
+from plugmem.api.routes import demo, inspector, extract, graphs, health, memories, retrieval
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +37,7 @@ def create_app() -> FastAPI:
     app.include_router(graphs.router, prefix="/api/v1")
     app.include_router(memories.router, prefix="/api/v1")
     app.include_router(retrieval.router, prefix="/api/v1")
+    app.include_router(extract.router, prefix="/api/v1")
     app.include_router(inspector.router, prefix="/api/v1")
     app.include_router(demo.router, prefix="/api/v1")
 

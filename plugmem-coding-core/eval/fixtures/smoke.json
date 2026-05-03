@@ -1,0 +1,70 @@
+{
+  "name": "smoke",
+  "baseUrl": "http://localhost:8080",
+  "apiKey": "dev-key-change-me",
+  "graphId": "eval://smoke",
+  "harness": "claude-code",
+  "cwd": "/tmp/eval-smoke",
+  "sessions": [
+    {
+      "id": 1,
+      "events": [
+        { "type": "session_start", "label": "first session, empty graph" },
+        {
+          "type": "user_prompt",
+          "label": "user states a project convention",
+          "prompt": "actually, we use httpx in this project, not requests"
+        },
+        {
+          "type": "pre_tool",
+          "label": "agent runs tests, will fail",
+          "toolName": "Bash",
+          "toolInput": { "command": "pytest tests/auth" },
+          "callId": "c1"
+        },
+        {
+          "type": "post_tool",
+          "toolName": "Bash",
+          "toolInput": { "command": "pytest tests/auth" },
+          "callId": "c1",
+          "toolResult": "ImportError: missing test dependency",
+          "outcome": "failure"
+        },
+        {
+          "type": "pre_tool",
+          "label": "agent installs deps and retries",
+          "toolName": "Bash",
+          "toolInput": { "command": "pip install -e . && pytest tests/auth" },
+          "callId": "c2"
+        },
+        {
+          "type": "post_tool",
+          "toolName": "Bash",
+          "toolInput": { "command": "pip install -e . && pytest tests/auth" },
+          "callId": "c2",
+          "toolResult": "PASSED 3 of 3",
+          "outcome": "success"
+        },
+        { "type": "session_end" }
+      ]
+    },
+    {
+      "id": 2,
+      "events": [
+        { "type": "session_start", "label": "second session — recall should fire" },
+        {
+          "type": "user_prompt",
+          "prompt": "add a new auth endpoint and write a test for it"
+        },
+        { "type": "session_end" }
+      ]
+    },
+    {
+      "id": 3,
+      "events": [
+        { "type": "session_start", "label": "third session — verify graph persists" },
+        { "type": "session_end" }
+      ]
+    }
+  ]
+}

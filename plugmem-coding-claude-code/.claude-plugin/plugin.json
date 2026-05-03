@@ -1,0 +1,8 @@
+{
+  "name": "plugmem-coding",
+  "version": "0.1.0",
+  "description": "PlugMem cross-session memory for Claude Code — a self-writing CLAUDE.md that learns project conventions and debugging recipes from your sessions.",
+  "author": {
+    "name": "PlugMem"
+  }
+}
