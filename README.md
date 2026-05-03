@@ -37,6 +37,18 @@ mg.retrieve_and_reason(...)
 ```
 - **Easy to modify**: Apply adaptive strategies by defining different value functions and reasoning prompts.
 
+### Coding-agent integration
+PlugMem ships a Claude Code plugin that turns the service into a
+**self-writing CLAUDE.md** — the agent learns project conventions,
+debugging recipes, and personal preferences from your sessions and
+recalls them at the start of future sessions.
+
+- **Plugin:** [`plugmem-coding-claude-code/`](./plugmem-coding-claude-code/) — install with `claude --plugin-dir <path>`.
+- **Onboarding:** [ONBOARDING.md](./plugmem-coding-claude-code/ONBOARDING.md) walks from zero to a verified loop in ~15 min.
+- **Architecture:** [`design_docs/plugmem_for_coding.md`](./design_docs/plugmem_for_coding.md) for the cross-session-memory design, promotion gate, recall policy, and per-harness graph isolation.
+
+OpenCode and OpenClaw adapters are planned (see the design doc); only the Claude Code adapter ships today.
+
 ## Installation
 1. Install benchmarks in `src/` and follow their installation docs to set up the environment.
 2. Install/upgrade `openai==2.6.1`.
