@@ -128,6 +128,7 @@ class RetrieveRequest(BaseModel):
     source_in: Optional[List[MemorySource]] = Field(
         None,
         description="Restrict recall to memories whose source is in this list.",
+    )
     session_id: Optional[str] = Field(
         None,
         description="If set, the recall is logged against this session id.",
