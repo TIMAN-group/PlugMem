@@ -198,6 +198,8 @@ class ChromaStorage:
         session_id: Optional[str] = None,
         credibility: int = 10,
         date: str = "",
+        source: Optional[str] = None,
+        confidence: float = 0.5,
     ) -> None:
         metadata: Dict[str, Any] = {
             "semantic_id": semantic_id,
@@ -210,9 +212,12 @@ class ChromaStorage:
             "son_semantic_ids": _serialize_list(son_semantic_ids or []),
             "credibility": credibility,
             "date": date,
+            "confidence": float(confidence),
         }
         if session_id is not None:
             metadata["session_id"] = session_id
+        if source is not None:
+            metadata["source"] = source
 
         col = self._col(graph_id, "semantic")
         kwargs: Dict[str, Any] = {
@@ -425,6 +430,8 @@ class ChromaStorage:
         episodic_ids: Optional[List[int]] = None,
         time: int = 0,
         return_value: float = 0.0,
+        source: Optional[str] = None,
+        confidence: float = 0.5,
     ) -> None:
         metadata: Dict[str, Any] = {
             "procedural_id": procedural_id,
@@ -432,9 +439,12 @@ class ChromaStorage:
             "time": time,
             "return": return_value,
             "episodic_ids": _serialize_list(episodic_ids or []),
+            "confidence": float(confidence),
         }
         if subgoal_id is not None:
             metadata["subgoal_id"] = subgoal_id
+        if source is not None:
+            metadata["source"] = source
         col = self._col(graph_id, "procedural")
         kwargs: Dict[str, Any] = {
             "ids": [str(procedural_id)],

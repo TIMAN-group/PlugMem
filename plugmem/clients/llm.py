@@ -2,6 +2,13 @@
 
 Consolidates call_gpt, call_qwen, call_dpsk, call_llm_openrouter_api into a
 single OpenAI-compatible client that accepts base_url + api_key + model.
+
+Phase tagging
+-------------
+LLM calls can be scoped to a "phase" (e.g. extract, retrieve, reason)
+via the `with_phase` context manager. The phase is recorded on each
+token-usage log entry so eval / observability can split costs by purpose
+without modifying every call site signature.
 """
 from __future__ import annotations
 
@@ -10,11 +17,40 @@ import logging
 import os
 import time
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Optional
+from contextlib import contextmanager
+from contextvars import ContextVar
+from typing import Any, Dict, Iterator, List, Optional
 
 from openai import AzureOpenAI, OpenAI
 
 logger = logging.getLogger(__name__)
+
+
+_current_phase: ContextVar[str] = ContextVar(
+    "plugmem_llm_phase", default="default",
+)
+
+
+@contextmanager
+def with_phase(phase: str) -> Iterator[None]:
+    """Tag all LLM calls in this scope with the given phase.
+
+    Phase values used in this codebase:
+      - "extract": promotion-gate extractor (POST /extract).
+      - "retrieve": inference/retrieving calls during recall.
+      - "reason": final reasoning synthesis (POST /reason).
+      - "structuring": Memory.close() trajectory structuring.
+      - "default": untagged calls (legacy / chat plugin).
+    """
+    token = _current_phase.set(phase)
+    try:
+        yield
+    finally:
+        _current_phase.reset(token)
+
+
+def current_phase() -> str:
+    return _current_phase.get()
 
 
 class LLMClient(ABC):
@@ -97,7 +133,11 @@ class OpenAICompatibleLLMClient(LLMClient):
             if usage is None:
                 return
             prompt_preview = messages[1]["content"][:100] if len(messages) > 1 else ""
-            entry = {"model": self.model, "prompt_first100": prompt_preview}
+            entry = {
+                "model": self.model,
+                "phase": current_phase(),
+                "prompt_first100": prompt_preview,
+            }
             entry.update(usage.model_dump())
             with open(self.token_usage_file, "a") as f:
                 f.write(json.dumps(entry) + "\n")

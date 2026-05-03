@@ -7,7 +7,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from plugmem import __version__
-from plugmem.api.routes import graphs, health, memories, retrieval
+from plugmem.api.routes import extract, graphs, health, memories, retrieval
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +32,7 @@ def create_app() -> FastAPI:
     app.include_router(graphs.router, prefix="/api/v1")
     app.include_router(memories.router, prefix="/api/v1")
     app.include_router(retrieval.router, prefix="/api/v1")
+    app.include_router(extract.router, prefix="/api/v1")
 
     return app
 
