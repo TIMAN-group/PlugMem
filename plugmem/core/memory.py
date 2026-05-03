@@ -1,7 +1,7 @@
 """Refactored Memory class — accepts injected LLMClient + EmbeddingClient."""
 from __future__ import annotations
 
-from typing import List
+from typing import List, Optional
 
 from plugmem.clients.embedding import EmbeddingClient, get_similarity
 from plugmem.clients.llm import LLMClient
@@ -29,8 +29,10 @@ class Memory:
         llm: LLMClient,
         embedder: EmbeddingClient,
         time: int = 0,
+        session_id: Optional[str] = None,
     ):
         self.time = time
+        self.session_id = session_id
         # If an LLMRouter is passed, use its structuring role
         if isinstance(llm, LLMRouter):
             self.llm = llm.structuring

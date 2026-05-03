@@ -81,21 +81,32 @@ class ChromaStorage:
         logger.info("Created graph %s with 5 collections", graph_id)
 
     def delete_graph(self, graph_id: str) -> None:
-        """Delete all collections for a memory graph."""
+        """Delete all collections for a memory graph (incl. recall audit)."""
         for node_type in NODE_TYPES:
-            name = _collection_name(graph_id, node_type)
             try:
-                self._client.delete_collection(name)
+                self._client.delete_collection(_collection_name(graph_id, node_type))
             except Exception:
                 pass
+        try:
+            self._client.delete_collection(f"{graph_id}_recall_audit")
+        except Exception:
+            pass
 
     def list_graphs(self) -> List[str]:
         """List all graph IDs by inspecting collection names."""
         collections = self._client.list_collections()
         graph_ids: set[str] = set()
         for col in collections:
-            # col may be a Collection object or a string depending on chromadb version
-            col_name = col.name if hasattr(col, "name") else str(col)
+            # col may be a Collection object or a string depending on chromadb version.
+            # In chromadb >= 0.6 list_collections returns names (strings); accessing
+            # `.name` on the proxy raises NotImplementedError despite hasattr being True.
+            if isinstance(col, str):
+                col_name = col
+            else:
+                try:
+                    col_name = col.name
+                except (AttributeError, NotImplementedError):
+                    col_name = str(col)
             for nt in NODE_TYPES:
                 suffix = f"_{nt}"
                 if col_name.endswith(suffix):
@@ -147,6 +158,7 @@ class ChromaStorage:
         subgoal: str = "",
         state: str = "",
         reward: str = "",
+        embedding: Optional[List[float]] = None,
     ) -> None:
         doc = f"{observation}\n{action}" if observation or action else ""
         metadata: Dict[str, Any] = {
@@ -161,11 +173,14 @@ class ChromaStorage:
         if session_id is not None:
             metadata["session_id"] = session_id
         col = self._col(graph_id, "episodic")
-        col.add(
-            ids=[str(episodic_id)],
-            documents=[doc],
-            metadatas=[metadata],
-        )
+        kwargs: Dict[str, Any] = {
+            "ids": [str(episodic_id)],
+            "documents": [doc],
+            "metadatas": [metadata],
+        }
+        if embedding is not None:
+            kwargs["embeddings"] = [_to_list(embedding)]
+        col.add(**kwargs)
 
     def get_episodic(self, graph_id: str, episodic_id: int) -> Optional[Dict]:
         col = self._col(graph_id, "episodic")
@@ -432,6 +447,7 @@ class ChromaStorage:
         return_value: float = 0.0,
         source: Optional[str] = None,
         confidence: float = 0.5,
+        session_id: Optional[str] = None,
     ) -> None:
         metadata: Dict[str, Any] = {
             "procedural_id": procedural_id,
@@ -445,6 +461,8 @@ class ChromaStorage:
             metadata["subgoal_id"] = subgoal_id
         if source is not None:
             metadata["source"] = source
+        if session_id is not None:
+            metadata["session_id"] = session_id
         col = self._col(graph_id, "procedural")
         kwargs: Dict[str, Any] = {
             "ids": [str(procedural_id)],
@@ -495,3 +513,113 @@ class ChromaStorage:
     def get_all_procedural(self, graph_id: str) -> Dict:
         col = self._col(graph_id, "procedural")
         return col.get(include=["documents", "metadatas", "embeddings"])
+
+    # ------------------------------------------------------------------ #
+    # Recall audit log
+    # ------------------------------------------------------------------ #
+    #
+    # A separate collection per graph (`{graph_id}_recall_audit`) records
+    # every /retrieve, /reason, and /recall_trace call. Lazily created on
+    # first append; not enumerated by `list_graphs` because the suffix is
+    # outside NODE_TYPES.
+
+    def _recall_col(self, graph_id: str):
+        return self._client.get_or_create_collection(
+            name=f"{graph_id}_recall_audit",
+            metadata={"hnsw:space": "cosine"},
+            embedding_function=self._embedding_fn,
+        )
+
+    def add_recall(
+        self,
+        graph_id: str,
+        *,
+        endpoint: str,
+        observation: str,
+        ts: str,
+        graph_time: int = 0,
+        session_id: Optional[str] = None,
+        goal: str = "",
+        subgoal: str = "",
+        state: str = "",
+        task_type: str = "",
+        mode: str = "",
+        next_subgoal: str = "",
+        query_tags: Optional[List[str]] = None,
+        selected_semantic_ids: Optional[List[int]] = None,
+        selected_procedural_ids: Optional[List[int]] = None,
+        n_messages: int = 0,
+        embedding: Optional[List[float]] = None,
+    ) -> int:
+        """Append one recall to the audit log. Returns the assigned recall_id."""
+        col = self._recall_col(graph_id)
+        recall_id = col.count()
+        metadata: Dict[str, Any] = {
+            "recall_id": recall_id,
+            "endpoint": endpoint,
+            "ts": ts,
+            "graph_time": graph_time,
+            "observation": observation,
+            "goal": goal,
+            "subgoal": subgoal,
+            "state": state,
+            "task_type": task_type,
+            "mode": mode,
+            "next_subgoal": next_subgoal,
+            "query_tags": _serialize_list(query_tags or []),
+            "selected_semantic_ids": _serialize_list(selected_semantic_ids or []),
+            "selected_procedural_ids": _serialize_list(selected_procedural_ids or []),
+            "n_messages": n_messages,
+        }
+        if session_id is not None:
+            metadata["session_id"] = session_id
+        kwargs: Dict[str, Any] = {
+            "ids": [str(recall_id)],
+            "documents": [observation or ""],
+            "metadatas": [metadata],
+        }
+        if embedding is not None:
+            kwargs["embeddings"] = [_to_list(embedding)]
+        col.add(**kwargs)
+        return recall_id
+
+    def list_recalls(
+        self,
+        graph_id: str,
+        session_id: Optional[str] = None,
+        limit: int = 100,
+    ) -> List[Dict[str, Any]]:
+        """Return audit rows newest-first, optionally filtered by session_id."""
+        col = self._recall_col(graph_id)
+        kwargs: Dict[str, Any] = {"include": ["metadatas"]}
+        if session_id is not None:
+            kwargs["where"] = {"session_id": session_id}
+        data = col.get(**kwargs)
+        rows = list(data.get("metadatas") or [])
+        for row in rows:
+            row["query_tags"] = _deserialize_list(row.get("query_tags", "[]"))
+            row["selected_semantic_ids"] = _deserialize_list(row.get("selected_semantic_ids", "[]"))
+            row["selected_procedural_ids"] = _deserialize_list(row.get("selected_procedural_ids", "[]"))
+        rows.sort(key=lambda r: r.get("recall_id", 0), reverse=True)
+        return rows[: max(0, limit)]
+
+    def list_sessions(self, graph_id: str) -> List[str]:
+        """Distinct session_ids that appear anywhere in the graph (nodes or recalls)."""
+        seen: set = set()
+        for node_type in ("episodic", "semantic", "procedural"):
+            col = self._col(graph_id, node_type)
+            data = col.get(include=["metadatas"])
+            for meta in data.get("metadatas", []) or []:
+                sid = meta.get("session_id")
+                if sid:
+                    seen.add(sid)
+        try:
+            audit_col = self._recall_col(graph_id)
+            data = audit_col.get(include=["metadatas"])
+            for meta in data.get("metadatas", []) or []:
+                sid = meta.get("session_id")
+                if sid:
+                    seen.add(sid)
+        except Exception:
+            pass
+        return sorted(seen)

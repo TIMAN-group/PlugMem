@@ -316,6 +316,7 @@ async function autoRemember(
   config: ResolvedConfig,
   messages: SessionMessage[] | undefined,
   source: string,
+  sessionId: string | undefined,
 ): Promise<void> {
   if (!messages || messages.length === 0) return;
   if (!config.defaultGraphId) return; // can't auto-remember without a target graph
@@ -327,7 +328,9 @@ async function autoRemember(
   const goal = inferGoal(messages);
 
   try {
-    await client.insertTrajectory(config.defaultGraphId, goal, steps);
+    await client.insertTrajectory(config.defaultGraphId, goal, steps, {
+      session_id: sessionId,
+    });
   } catch (err) {
     // Auto-remember is best-effort — log but don't crash the session
     console.error(
@@ -363,6 +366,11 @@ export function createPlugMemPlugin(config: PlugMemPluginConfig): PluginEntry {
   const client = new PlugMemClient(config);
   const defaultGraphId = resolved.defaultGraphId;
 
+  // Captured from hook contexts so `plugmem.remember` calls — which only
+  // see params, not the OpenClaw context — can auto-attach the active
+  // session id. Updated whenever any hook we listen on fires.
+  let lastSeenSessionId: string | undefined;
+
   return {
     id: "plugmem",
     name: "PlugMem",
@@ -383,6 +391,14 @@ export function createPlugMemPlugin(config: PlugMemPluginConfig): PluginEntry {
           graph_id: Type.Optional(
             Type.String({
               description: "Memory graph ID (uses default if omitted)",
+            }),
+          ),
+          session_id: Type.Optional(
+            Type.String({
+              description:
+                "Tag the stored nodes with this session id so they group with " +
+                "other memories from the same run in the Sessions view. " +
+                "Defaults to the active OpenClaw session id when available.",
             }),
           ),
           // -- Simple semantic insertion (most common for agents) --
@@ -417,6 +433,8 @@ export function createPlugMemPlugin(config: PlugMemPluginConfig): PluginEntry {
         async execute(_id, params) {
           try {
             const graphId = requireGraphId(params, defaultGraphId);
+            const sessionId =
+              (params.session_id as string | undefined) ?? lastSeenSessionId;
 
             // Trajectory mode: goal + steps
             if (params.steps && params.goal) {
@@ -427,6 +445,7 @@ export function createPlugMemPlugin(config: PlugMemPluginConfig): PluginEntry {
                   observation: string;
                   action: string;
                 }>,
+                { session_id: sessionId },
               );
               return textContent(
                 `Stored trajectory (${(params.steps as unknown[]).length} steps). ` +
@@ -443,6 +462,7 @@ export function createPlugMemPlugin(config: PlugMemPluginConfig): PluginEntry {
                     tags: (params.tags as string[]) ?? [],
                   },
                 ],
+                ...(sessionId ? { session_id: sessionId } : {}),
               });
               return textContent(
                 `Remembered: "${truncate(params.text as string, 80)}". ` +
@@ -564,12 +584,14 @@ export function createPlugMemPlugin(config: PlugMemPluginConfig): PluginEntry {
       if (resolved.autoRemember !== false) {
         // Before session reset (/new, /reset) — capture the full session
         if (resolved.autoRemember.onSessionReset) {
-          api.on("before_reset", async (event) => {
+          api.on("before_reset", async (event, ctx) => {
+            if (ctx?.sessionId) lastSeenSessionId = ctx.sessionId;
             await autoRemember(
               client,
               resolved,
               event.messages,
               "session_reset",
+              ctx?.sessionId,
             );
           });
         }
@@ -578,10 +600,17 @@ export function createPlugMemPlugin(config: PlugMemPluginConfig): PluginEntry {
         // Note: current OpenClaw versions don't populate event.messages for
         // this hook, so we fall back to reading the JSONL session file.
         if (resolved.autoRemember.onCompaction) {
-          api.on("before_compaction", async (event) => {
+          api.on("before_compaction", async (event, ctx) => {
+            if (ctx?.sessionId) lastSeenSessionId = ctx.sessionId;
             const messages =
               event.messages ?? (await readSessionFile(event.sessionFile));
-            await autoRemember(client, resolved, messages, "compaction");
+            await autoRemember(
+              client,
+              resolved,
+              messages,
+              "compaction",
+              ctx?.sessionId,
+            );
           });
         }
       }

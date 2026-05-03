@@ -8,7 +8,12 @@ from pathlib import Path
 
 import chromadb
 
-from plugmem.clients.embedding import EmbeddingClient, HTTPEmbeddingClient, PlugMemEmbeddingFunction
+from plugmem.clients.embedding import (
+    EmbeddingClient,
+    HTTPEmbeddingClient,
+    LocalDeterministicEmbeddingClient,
+    PlugMemEmbeddingFunction,
+)
 from plugmem.clients.llm import LLMClient, OpenAICompatibleLLMClient
 from plugmem.clients.llm_router import LLMRouter
 from plugmem.config import PlugMemConfig
@@ -27,6 +32,7 @@ def get_config() -> PlugMemConfig:
         llm_model=os.getenv("LLM_MODEL", ""),
         embedding_base_url=os.getenv("EMBEDDING_BASE_URL", ""),
         embedding_model=os.getenv("EMBEDDING_MODEL", "nvidia/NV-Embed-v2"),
+        embedding_api_key=os.getenv("EMBEDDING_API_KEY", ""),
         chroma_mode=os.getenv("CHROMA_MODE", "persistent"),
         chroma_path=os.getenv("CHROMA_PATH", "./data/chroma"),
         chroma_host=os.getenv("CHROMA_HOST", "localhost"),
@@ -70,15 +76,70 @@ def get_llm(config: PlugMemConfig | None = None) -> LLMClient | LLMRouter:
     return _llm_client
 
 
+_OPENAI_EMBED_URL = "https://api.openai.com/v1/embeddings"
+_OPENAI_DEFAULT_MODEL = "text-embedding-3-small"
+
+
 def get_embedder(config: PlugMemConfig | None = None) -> EmbeddingClient:
+    """Resolve the embedder via a three-tier cascade.
+
+    1. ``EMBEDDING_BASE_URL`` set → ``HTTPEmbeddingClient`` against that URL,
+       optionally authed with ``EMBEDDING_API_KEY``. The canonical path for
+       self-hosted NV-Embed-v2 or any custom provider.
+    2. ``OPENAI_API_KEY`` set → OpenAI ``text-embedding-3-small`` (override
+       the model with ``EMBEDDING_MODEL``). Convenient no-GPU fallback.
+    3. Otherwise → ``LocalDeterministicEmbeddingClient`` (sha256-based, demo
+       only — not semantically meaningful).
+    """
     global _embedding_client
-    if _embedding_client is None:
-        cfg = config or get_config()
+    if _embedding_client is not None:
+        return _embedding_client
+
+    cfg = config or get_config()
+    openai_key = os.getenv("OPENAI_API_KEY", "")
+
+    if cfg.embedding_base_url:
         _embedding_client = HTTPEmbeddingClient(
             base_url=cfg.embedding_base_url,
             model=cfg.embedding_model,
+            api_key=cfg.embedding_api_key or None,
             max_text_len=cfg.embedding_max_text_len,
         )
+        logger.info(
+            "Embedder: HTTP %s (model=%s, auth=%s)",
+            cfg.embedding_base_url, cfg.embedding_model,
+            "yes" if cfg.embedding_api_key else "no",
+        )
+        return _embedding_client
+
+    if openai_key:
+        # User didn't pin a base URL but has an OpenAI key — use it.
+        # EMBEDDING_MODEL still wins so they can pick -3-large or similar.
+        model = cfg.embedding_model
+        if model == "nvidia/NV-Embed-v2":
+            # Default config value — assume they want OpenAI's default since
+            # they didn't override either field.
+            model = _OPENAI_DEFAULT_MODEL
+        _embedding_client = HTTPEmbeddingClient(
+            base_url=_OPENAI_EMBED_URL,
+            model=model,
+            api_key=openai_key,
+            max_text_len=cfg.embedding_max_text_len,
+        )
+        logger.info(
+            "Embedder: OpenAI fallback %s (paid via OPENAI_API_KEY). "
+            "Set EMBEDDING_BASE_URL to override or unset OPENAI_API_KEY "
+            "to fall through to the local deterministic embedder.",
+            model,
+        )
+        return _embedding_client
+
+    logger.warning(
+        "Embedder: LocalDeterministicEmbeddingClient (sha256). "
+        "Suitable for the demo and tests, NOT for retrieval quality. "
+        "Set EMBEDDING_BASE_URL or OPENAI_API_KEY to enable a real embedder."
+    )
+    _embedding_client = LocalDeterministicEmbeddingClient()
     return _embedding_client
 
 

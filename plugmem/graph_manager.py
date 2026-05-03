@@ -28,6 +28,20 @@ class GraphManager:
         self._embedder = embedder
         self._graphs: Dict[str, MemoryGraph] = {}
 
+    @property
+    def storage(self) -> ChromaStorage:
+        """Public accessor for the underlying ChromaStorage."""
+        return self._storage
+
+    @property
+    def embedder(self) -> EmbeddingClient:
+        """Public accessor for the active embedder."""
+        return self._embedder
+
+    def invalidate_cache(self, graph_id: str) -> None:
+        """Drop the in-memory MemoryGraph for graph_id; next get_graph reloads."""
+        self._graphs.pop(graph_id, None)
+
     def create_graph(self, graph_id: Optional[str] = None) -> str:
         """Create a new memory graph. Returns the graph_id."""
         if graph_id is None:

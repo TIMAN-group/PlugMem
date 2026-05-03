@@ -49,6 +49,7 @@ def _insert_trajectory(graph, body: MemoryInsertRequest) -> MemoryInsertResponse
         llm=llm,
         embedder=embedder,
         time=graph.semantic_time,
+        session_id=body.session_id,
     )
     for step in body.steps:
         mem.append(action_t0=step.action, observation_t1=step.observation)
@@ -65,6 +66,7 @@ def _insert_structured(graph, body: MemoryInsertRequest) -> MemoryInsertResponse
     # Build a Memory-like object with pre-structured data
     mem = Memory.__new__(Memory)
     mem.time = graph.semantic_time
+    mem.session_id = body.session_id
     mem.llm = get_llm()
     mem.embedder = embedder
     mem.memory = {

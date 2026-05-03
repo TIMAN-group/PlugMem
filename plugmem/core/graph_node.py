@@ -147,6 +147,7 @@ class ProceduralNode:
         return_value: float = 0.0,
         source: Optional[str] = None,
         confidence: float = 0.5,
+        session_id: Optional[str] = None,
     ):
         self.procedural_id = procedural_id
         self.procedural_memory_str = procedural_memory_str
@@ -158,6 +159,7 @@ class ProceduralNode:
         self.Return = return_value
         self.source = source
         self.confidence = confidence
+        self.session_id = session_id
 
     @property
     def embedding(self) -> Optional[np.ndarray]:

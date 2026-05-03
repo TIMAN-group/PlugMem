@@ -258,6 +258,7 @@ class MemoryGraph:
                 return_value=meta.get("return", 0.0),
                 source=meta.get("source"),
                 confidence=float(meta.get("confidence", 0.5)),
+                session_id=meta.get("session_id"),
             )
             self.procedural_nodes.append(node)
             self.procedural_time = max(self.procedural_time, node.time + 1)
@@ -314,6 +315,15 @@ class MemoryGraph:
             if sg_node.procedural_nodes:
                 sg_node.activate = True
 
+        # Link procedurals -> episodics
+        proc_data = self.storage.get_all_procedural(self.graph_id)
+        for meta, proc_node in zip(proc_data.get("metadatas", []), self.procedural_nodes):
+            episodic_ids = _deserialize_list(meta.get("episodic_ids", "[]"))
+            for eid in episodic_ids:
+                epis_node = epis_id2node.get(eid)
+                if epis_node is not None:
+                    proc_node.episodic_nodes.append(epis_node)
+
     # ------------------------------------------------------------------ #
     # Unified insert
     # ------------------------------------------------------------------ #
@@ -321,6 +331,10 @@ class MemoryGraph:
     def insert(self, memory: Memory) -> None:
         """Insert structured memory into the graph and persist to ChromaDB."""
         normalize_memory(memory)
+
+        # session_id stamps every node created by this insert. Used by the
+        # Sessions view + recall audit to group nodes by run.
+        sid: Optional[str] = getattr(memory, "session_id", None)
 
         # 1. Episodic nodes
         episodic_nodes: List[List[EpisodicNode]] = []
@@ -337,12 +351,15 @@ class MemoryGraph:
                     observation=observation,
                     action=action,
                     time=time_val,
+                    session_id=sid,
                     subgoal=step.get("subgoal", "") if isinstance(step, dict) else "",
                     state=step.get("state", "") if isinstance(step, dict) else "",
                     reward=step.get("reward", "") if isinstance(step, dict) else "",
                 )
                 self.episodic_nodes.append(epis_node)
                 episodic_nodes[i].append(epis_node)
+                if sid is not None:
+                    self.session_ids.setdefault(sid, []).append(epis_node)
 
                 self.storage.add_episodic(
                     self.graph_id,
@@ -350,6 +367,7 @@ class MemoryGraph:
                     observation=epis_node.observation,
                     action=epis_node.action,
                     time=epis_node.time,
+                    session_id=sid,
                     subgoal=epis_node.subgoal,
                     state=epis_node.state,
                     reward=epis_node.reward,
@@ -375,6 +393,7 @@ class MemoryGraph:
                 time=self.semantic_time,
                 source=sem_item.get("source"),
                 confidence=float(sem_item.get("confidence", 0.5)),
+                session_id=sid,
             )
 
             # Link episodic nodes
@@ -438,6 +457,7 @@ class MemoryGraph:
                 tags=sem_node.tags,
                 tag_ids=[t.tag_id for t in sem_node.tag_nodes],
                 time=sem_node.time,
+                session_id=sid,
                 episodic_ids=[e.episodic_id for e in sem_node.episodic_nodes],
                 bro_semantic_ids=bro_ids,
                 source=sem_node.source,
@@ -487,6 +507,7 @@ class MemoryGraph:
                 return_value=proc_item.get("return", 0.0),
                 source=proc_item.get("source"),
                 confidence=float(proc_item.get("confidence", 0.5)),
+                session_id=sid,
             )
             traj_num = proc_item.get("trajectory_num", 0)
             if traj_num < len(episodic_nodes):
@@ -511,6 +532,7 @@ class MemoryGraph:
                 time=self.procedural_time, return_value=proc_node.Return,
                 source=proc_node.source,
                 confidence=proc_node.confidence,
+                session_id=sid,
             )
             # Persist subgoal
             if is_new_subgoal:
@@ -545,32 +567,46 @@ class MemoryGraph:
         tag_embedding=None,
         value_func: ValueBase = None,
         make_tag_nodes: bool = False,
+        _trace: Optional[List[Dict[str, Any]]] = None,
     ) -> List[TagNode]:
         if tag_embedding is None:
             tag_embedding = self.embedder.embed(tag)
 
+        evaluations: List[Dict[str, Any]] = []
         values = []
         for tag_node in self.tag_nodes:
             if tag_node.embedding is None:
                 tag_node.embedding = self.embedder.embed(tag_node.tag)
             relevance = get_similarity(tag_embedding, tag_node.embedding)
+            recency = self.semantic_time - tag_node.time
             value = value_func.evaluate(
                 Relevance=relevance,
-                Recency=self.semantic_time - tag_node.time,
+                Recency=recency,
                 Importance=tag_node.importance,
             )
             values.append((value, tag_node.tag_id))
+            if _trace is not None:
+                evaluations.append({
+                    "tag_id": tag_node.tag_id,
+                    "tag": tag_node.tag,
+                    "relevance": float(relevance),
+                    "recency": int(recency),
+                    "importance": float(tag_node.importance),
+                    "value": float(value),
+                })
 
         values.sort(reverse=True, key=lambda x: x[0])
-        values = values[: value_func.k]
+        topk = values[: value_func.k]
 
         result = []
-        for value, tag_id in values:
+        selected_ids: set[int] = set()
+        for value, tag_id in topk:
             if value < value_func.value_threshold:
                 break
             node = self.tag_id2node.get(tag_id)
             if node:
                 result.append(node)
+                selected_ids.add(tag_id)
 
         if not result and make_tag_nodes:
             tag_id = len(self.tag_nodes)
@@ -579,6 +615,13 @@ class MemoryGraph:
             self.tag2node[tag] = tag_node
             self.tag_id2node[tag_id] = tag_node
             result.append(tag_node)
+
+        if _trace is not None:
+            for ev in evaluations:
+                ev["selected"] = ev["tag_id"] in selected_ids
+                ev["query_tag"] = tag
+            evaluations.sort(key=lambda d: d["value"], reverse=True)
+            _trace.extend(evaluations)
 
         return result
 
@@ -590,6 +633,7 @@ class MemoryGraph:
         value_func: Optional[ValueBase] = None,
         min_confidence: Optional[float] = None,
         source_in: Optional[List[str]] = None,
+        _trace: Optional[Dict[str, Any]] = None,
     ) -> List[SemanticNode]:
         if value_func_tag is None or value_func is None:
             raise ValueError("value_func_tag and value_func must not be None.")
@@ -619,10 +663,27 @@ class MemoryGraph:
         sim_list.sort(reverse=True, key=lambda x: x[0])
         top_sim_nodes = [self.semantic_id2node[sid] for _, sid in sim_list[:sem_node_topk] if sid in self.semantic_id2node]
 
+        if _trace is not None:
+            _trace["semantic_topk_by_similarity"] = [
+                {
+                    "semantic_id": sid,
+                    "similarity": float(sim),
+                    "text": (self.semantic_id2node[sid].get_semantic_memory() or "")[:200]
+                            if sid in self.semantic_id2node else "",
+                }
+                for sim, sid in sim_list[:sem_node_topk]
+                if sid in self.semantic_id2node
+            ]
+            _trace["query_tags"] = list(query_tags)
+
         # Phase 2: tag-based voting
+        tag_trace: Optional[List[Dict[str, Any]]] = [] if _trace is not None else None
         tag_nodes = []
         for tag, tag_emb in zip(query_tags, semantic_memory_embedding["tags"]):
-            tag_nodes.extend(self.retrieve_tag_nodes(tag=tag, tag_embedding=tag_emb, value_func=value_func_tag))
+            tag_nodes.extend(self.retrieve_tag_nodes(
+                tag=tag, tag_embedding=tag_emb,
+                value_func=value_func_tag, _trace=tag_trace,
+            ))
 
         tag_vote: Dict[int, Dict[str, float]] = {}
         for tag_node in tag_nodes:
@@ -643,6 +704,9 @@ class MemoryGraph:
             tag_vote[sid]["cnt"] += 1
             tag_vote[sid]["importance"] += 2.0
 
+        if _trace is not None:
+            _trace["tag_candidates"] = tag_trace or []
+
         # Phase 3: score candidates
         candidate_nodes = list(set(
             [self.semantic_id2node[sid] for sid in tag_vote if sid in self.semantic_id2node]
@@ -655,6 +719,7 @@ class MemoryGraph:
             if _passes_metadata_filter(n, min_confidence, source_in)
         ]
 
+        candidate_trace: List[Dict[str, Any]] = []
         values = []
         for sem_node in candidate_nodes:
             if sem_node.embedding is None:
@@ -662,23 +727,48 @@ class MemoryGraph:
             relevance = get_similarity(query_embedding, sem_node.embedding)
             num_tags = max(1, len(sem_node.tags))
             importance_score = tag_vote.get(sem_node.semantic_id, {}).get("importance", 0.0) / num_tags
+            tag_votes_cnt = int(tag_vote.get(sem_node.semantic_id, {}).get("cnt", 0))
             recency = (self.semantic_time - sem_node.time) if isinstance(sem_node.time, int) else 0
             value = value_func.evaluate(
                 Relevance=relevance, Recency=recency,
                 Importance=importance_score, Credibility=sem_node.Credibility,
             )
             values.append((value, sem_node.semantic_id))
+            if _trace is not None:
+                candidate_trace.append({
+                    "semantic_id": sem_node.semantic_id,
+                    "text": (sem_node.get_semantic_memory() or "")[:240],
+                    "tags": list(sem_node.tags),
+                    "relevance": float(relevance),
+                    "recency": int(recency),
+                    "importance": float(importance_score),
+                    "credibility": int(getattr(sem_node, "Credibility", 0)),
+                    "tag_votes": tag_votes_cnt,
+                    "value": float(value),
+                    "is_active": bool(sem_node.is_active),
+                })
 
         values.sort(reverse=True, key=lambda x: x[0])
-        values = values[: value_func.k]
+        kept = values[: value_func.k]
 
         result = []
-        for value, sid in values:
+        selected_ids: set[int] = set()
+        for value, sid in kept:
             if value < value_func.value_threshold:
                 break
             node = self.semantic_id2node.get(sid)
             if node:
                 result.append(node)
+                selected_ids.add(sid)
+
+        if _trace is not None:
+            for c in candidate_trace:
+                c["selected"] = c["semantic_id"] in selected_ids
+            candidate_trace.sort(key=lambda d: d["value"], reverse=True)
+            _trace["semantic_candidates"] = candidate_trace
+            _trace["k"] = int(value_func.k)
+            _trace["value_threshold"] = float(value_func.value_threshold)
+
         return result
 
     def retrieve_semantic_nodes_wo_tag(
@@ -780,36 +870,68 @@ class MemoryGraph:
         self, subgoal: str, value_func_subgoal: ValueBase, value_func: ValueBase,
         min_confidence: Optional[float] = None,
         source_in: Optional[List[str]] = None,
+        _trace: Optional[Dict[str, Any]] = None,
     ) -> List[ProceduralNode]:
         embedding = self.embedder.embed(subgoal)
         subgoal_node = self.retrieve_subgoal_nodes(
             subgoal=subgoal, value_func=value_func_subgoal,
         )
+        if _trace is not None:
+            _trace["subgoal_query"] = subgoal
+            _trace["subgoal_match"] = (
+                None if subgoal_node is None
+                else {"subgoal_id": subgoal_node.subgoal_id,
+                      "subgoal": subgoal_node.subgoal}
+            )
+            _trace["procedural_candidates"] = []
         if subgoal_node is None:
             return []
 
+        candidate_trace: List[Dict[str, Any]] = []
         values = []
         for proc_node in subgoal_node.procedural_nodes:
             if not _passes_metadata_filter(proc_node, min_confidence, source_in):
                 continue
             relevance = get_similarity(embedding, proc_node.embedding)
+            recency = self.procedural_time - proc_node.time
             value = value_func.evaluate(
                 Relevance=relevance,
                 Return=proc_node.Return,
-                Recency=self.procedural_time - proc_node.time,
+                Recency=recency,
             )
             values.append((value, proc_node.procedural_id))
+            if _trace is not None:
+                candidate_trace.append({
+                    "procedural_id": proc_node.procedural_id,
+                    "text": (proc_node.get_procedural_memory() or "")[:240],
+                    "subgoal": subgoal_node.subgoal,
+                    "relevance": float(relevance),
+                    "recency": int(recency),
+                    "return": float(proc_node.Return),
+                    "value": float(value),
+                })
 
         values.sort(reverse=True, key=lambda x: x[0])
-        values = values[: value_func.k]
+        kept = values[: value_func.k]
 
         result = []
-        for value, pid in values:
+        selected_ids: set[int] = set()
+        for value, pid in kept:
             if value < value_func.value_threshold:
                 break
             node = self.procedural_id2node.get(pid)
             if node:
                 result.append(node)
+                selected_ids.add(pid)
+
+        if _trace is not None:
+            for c in candidate_trace:
+                c["selected"] = c["procedural_id"] in selected_ids
+            candidate_trace.sort(key=lambda d: d["value"], reverse=True)
+            _trace["procedural_candidates"] = candidate_trace
+            _trace["k"] = int(value_func.k)
+            _trace["value_threshold"] = float(value_func.value_threshold)
+
         return result
 
     # ------------------------------------------------------------------ #
@@ -827,6 +949,7 @@ class MemoryGraph:
         mode: str = None,
         min_confidence: Optional[float] = None,
         source_in: Optional[List[str]] = None,
+        _audit: Optional[Dict[str, Any]] = None,
     ) -> Tuple[List[Dict[str, str]], Dict[str, Any], str]:
         next_subgoal, query_tags = get_plan(
             self.retrieval_llm, goal=goal, subgoal=subgoal, state=state, observation=observation,
@@ -905,7 +1028,160 @@ class MemoryGraph:
         }
         messages = prompt_template.build_messages(variables)
         messages = [{"role": m.role, "content": m.content} for m in messages]
+
+        if _audit is not None:
+            _audit["next_subgoal"] = next_subgoal or ""
+            _audit["query_tags"] = list(query_tags or [])
+            _audit["selected_semantic_ids"] = [n.semantic_id for n in semantic_nodes]
+            _audit["selected_procedural_ids"] = [n.procedural_id for n in procedural_nodes]
+
         return messages, variables, mode
+
+    def retrieve_with_trace(
+        self,
+        observation: str,
+        goal: str = None,
+        subgoal: str = None,
+        state: str = None,
+        time: str = "",
+        task_type: str = "",
+        mode: Optional[str] = None,
+        query_tags: Optional[List[str]] = None,
+        next_subgoal: Optional[str] = None,
+        auto_plan: bool = False,
+    ) -> Dict[str, Any]:
+        """Run the retrieval pipeline with full instrumentation.
+
+        Design constraint: this is the *only* trace-producing entrypoint;
+        production retrieval (``retrieve_memory``) does not pay the cost.
+
+        ``auto_plan`` controls whether the LLM planner fills in missing
+        ``mode`` / ``query_tags`` / ``next_subgoal``. When False (default),
+        sensible no-LLM fallbacks are used so the demo works without any
+        LLM service configured.
+        """
+        # 1. Plan / mode resolution
+        plan_source: Dict[str, str] = {}
+        if mode is None:
+            if auto_plan:
+                mode = get_mode(
+                    self.retrieval_llm, observation=observation,
+                    task_type=task_type, prompts=self.prompts, graph_id=self.graph_id,
+                )
+                plan_source["mode"] = "llm"
+            else:
+                mode = "semantic_memory"
+                plan_source["mode"] = "default"
+        else:
+            plan_source["mode"] = "override"
+
+        if (query_tags is None or next_subgoal is None) and auto_plan:
+            llm_subgoal, llm_tags = get_plan(
+                self.retrieval_llm, goal=goal, subgoal=subgoal, state=state,
+                observation=observation, prompts=self.prompts, graph_id=self.graph_id,
+            )
+            if next_subgoal is None:
+                next_subgoal = llm_subgoal
+                plan_source["next_subgoal"] = "llm"
+            if query_tags is None:
+                query_tags = llm_tags
+                plan_source["query_tags"] = "llm"
+
+        if next_subgoal is None:
+            next_subgoal = subgoal or observation or ""
+            plan_source.setdefault("next_subgoal", "default")
+        else:
+            plan_source.setdefault("next_subgoal", "override")
+
+        if query_tags is None:
+            query_tags = []
+            plan_source.setdefault("query_tags", "default")
+        else:
+            plan_source.setdefault("query_tags", "override")
+
+        # 2. Retrieve with traces
+        sem_trace: Dict[str, Any] = {}
+        proc_trace: Dict[str, Any] = {}
+        semantic_nodes: List[SemanticNode] = []
+        procedural_nodes: List[ProceduralNode] = []
+
+        if mode in ("semantic_memory", "episodic_memory"):
+            semantic_nodes = self.retrieve_semantic_nodes(
+                semantic_memory={"semantic_memory": observation, "tags": query_tags},
+                value_func_tag=self.tag_relevant,
+                value_func=self.semantic_relevant,
+                _trace=sem_trace,
+            )
+        if mode in ("procedural_memory", "episodic_memory"):
+            procedural_nodes = self.retrieve_procedural_nodes(
+                subgoal=next_subgoal,
+                value_func_subgoal=self.subgoal_relevant,
+                value_func=self.procedural_relevant,
+                _trace=proc_trace,
+            )
+
+        # 3. Build memory text & rendered prompt — same shape as retrieve_memory
+        semantic_memory_str = ""
+        procedural_memory_str = ""
+        episodic_memory_str = ""
+
+        if mode == "episodic_memory":
+            episodic_memory_str = self.retrieve_episodic_nodes(observation=observation)
+        elif mode == "semantic_memory":
+            if not semantic_nodes:
+                semantic_memory_str = "No relevant fact"
+            else:
+                semantic_memory_str = "".join(
+                    f"Fact {i}: {n.get_semantic_memory()}\n"
+                    for i, n in enumerate(semantic_nodes)
+                )
+        elif mode == "procedural_memory":
+            if not procedural_nodes:
+                procedural_memory_str = "No relevant experiences"
+            else:
+                procedural_memory_str = "".join(
+                    f"Experience {i}: {n.get_procedural_memory()}\n"
+                    for i, n in enumerate(procedural_nodes)
+                )
+
+        _reasoning_map = {
+            "episodic_memory": ("reasoning_episodic", DefaultEpisodicPrompt),
+            "semantic_memory": ("reasoning_semantic", DefaultSemanticPrompt),
+            "procedural_memory": ("reasoning_procedural", DefaultProceduralPrompt),
+        }
+        prompt_name, fallback_cls = _reasoning_map.get(mode, ("reasoning_semantic", DefaultSemanticPrompt))
+        if self.prompts is not None:
+            prompt_template = self.prompts.get(prompt_name, graph_id=self.graph_id)
+        else:
+            prompt_template = fallback_cls()
+
+        variables = {
+            "goal": goal, "subgoal": subgoal, "state": state, "observation": observation,
+            "semantic_memory": semantic_memory_str,
+            "procedural_memory": procedural_memory_str,
+            "episodic_memory": episodic_memory_str,
+            "time": time, "information": episodic_memory_str, "question": observation,
+        }
+        rendered = prompt_template.build_messages(variables)
+        rendered_prompt = [{"role": m.role, "content": m.content} for m in rendered]
+
+        return {
+            "mode": mode,
+            "plan": {
+                "next_subgoal": next_subgoal,
+                "query_tags": list(query_tags),
+                "source": plan_source,
+            },
+            "trace": {
+                "semantic": sem_trace,
+                "procedural": proc_trace,
+            },
+            "selected": {
+                "semantic_ids": [n.semantic_id for n in semantic_nodes],
+                "procedural_ids": [n.procedural_id for n in procedural_nodes],
+            },
+            "rendered_prompt": rendered_prompt,
+        }
 
     def retrieve_and_reason(
         self,
