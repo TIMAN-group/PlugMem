@@ -37,6 +37,27 @@ mg.retrieve_and_reason(...)
 ```
 - **Easy to modify**: Apply adaptive strategies by defining different value functions and reasoning prompts.
 
+### CLI & daemon (`plugmem`)
+For self-hosting, a Typer-based CLI wraps the FastAPI service with an
+OpenClaw-style setup wizard plus daemon controls:
+
+```bash
+uv tool install .              # or: pipx install .
+plugmem init                   # interactive: LLM, embedding, service, /health probe
+plugmem start                  # daemonize uvicorn; PID + log under ~/.local/state/plugmem/
+plugmem status                 # running/stopped + last health probe
+plugmem health                 # one-shot /health (exits non-zero on failure)
+plugmem logs -f                # tail the daemon log
+plugmem stop / restart
+```
+
+Config lives at `$XDG_CONFIG_HOME/plugmem/config.toml` (or
+`~/.config/plugmem/config.toml`); env vars override TOML. The wizard
+auto-detects Ollama on `127.0.0.1:11434` and offers its pulled models
+as defaults — biggest UX win for hobbyists who already run Ollama.
+
+Design doc: [`design_docs/plugmem_cli.md`](./design_docs/plugmem_cli.md).
+
 ### Coding-agent integration
 PlugMem ships a Claude Code plugin that turns the service into a
 **self-writing CLAUDE.md** — the agent learns project conventions,
