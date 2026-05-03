@@ -108,6 +108,27 @@ mkdir -p "$DIR_PATH/episodic_memory" \
    python eval_hotpotqa_all.py
    ```
 
+## OpenClaw plugin
+
+In addition to being a research project, we also ship PlugMem as a
+plugin service so you can drop long-term memory into an existing
+OpenClaw agent without writing any of the storage or retrieval code
+yourself. The plugin:
+
+- exposes `plugmem.remember` and `plugmem.recall` tools to the agent;
+- auto-saves the session trajectory on `/reset` and before context
+  compaction, then runs PlugMem's structuring pipeline over it;
+- fans recall out across a default graph plus optional read-only shared
+  graphs (e.g. a `user-facts` graph reused across multiple agents).
+
+A built-in **Memory Inspector** (web UI at `http://localhost:8080/inspector/`)
+lets you browse what was remembered, debug recall scoring node-by-node,
+view the graph topology, and trace each session's inserts and recalls.
+
+End-to-end setup — service, plugin registration, verification, inspector
+walkthrough, and shared-graph patterns — lives in
+[openclaw-plugmem-plugin/ONBOARDING.md](openclaw-plugmem-plugin/ONBOARDING.md).
+
 ## Reproducibility
 - We release agent trajectories and memory graph artifacts for all three tasks.
 - We release human demonstrations used for WebArena (Under License CC BY 4.0).
