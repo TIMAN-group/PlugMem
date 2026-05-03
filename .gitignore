@@ -3,6 +3,10 @@ __pycache__/
 *.py[codz]
 *$py.class
 
+# Node.js (OpenClaw plugin)
+node_modules/
+dist/
+
 # C extensions
 *.so
 
@@ -205,3 +209,9 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# ChromaDB persistent data
+data/
+
+# Local working notes (not for the repo)
+CLAUDE.md

@@ -1,0 +1,197 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PlugMem — Memory Inspector</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=VT323&display=swap">
+  <link id="theme-link" rel="stylesheet" href="themes/default.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-left">
+      <h1 class="brand">PlugMem · Memory Inspector</h1>
+      <label class="field">
+        <span class="field-label">Graph</span>
+        <select id="graph-picker"></select>
+      </label>
+    </div>
+    <div class="topbar-right">
+      <div id="stats-bar" class="stats" aria-live="polite"></div>
+      <label class="field">
+        <span class="field-label">Theme</span>
+        <select id="theme-picker">
+          <option value="default">default</option>
+          <option value="pixel">pixel office</option>
+        </select>
+      </label>
+      <button id="api-key-btn" class="btn btn-ghost" title="Set X-API-Key">key</button>
+    </div>
+  </header>
+
+  <nav class="tabs" role="tablist">
+    <button class="tab" data-tab="browse" role="tab">Browse</button>
+    <button class="tab" data-tab="recall" role="tab">Recall trace</button>
+    <button class="tab" data-tab="graph" role="tab">Graph</button>
+    <button class="tab" data-tab="sessions" role="tab">Sessions</button>
+  </nav>
+
+  <div id="toast" class="toast" hidden></div>
+
+  <div id="empty-banner" class="banner" hidden>
+    <div>
+      <strong>No graphs yet.</strong>
+      Load a fake-but-realistic demo trajectory (a coding agent on the
+      <code>acme-api</code> repo plus a personal travel session) to play with the inspector.
+    </div>
+    <button id="empty-banner-btn" class="btn btn-primary">Load demo graph</button>
+  </div>
+
+  <main class="main">
+    <section id="tab-browse" class="tab-panel" role="tabpanel" hidden>
+      <aside class="sidebar">
+        <div class="chip-row" id="browse-type-chips" role="tablist" aria-label="Node type"></div>
+        <div class="search-row">
+          <input id="browse-search" type="search" placeholder="search text…" autocomplete="off">
+          <label class="check"><input type="checkbox" id="browse-only-active"> only active</label>
+        </div>
+        <div class="hint" id="browse-result-hint"></div>
+      </aside>
+      <section class="content split">
+        <div class="table-wrap">
+          <table class="node-table">
+            <thead><tr id="browse-thead"></tr></thead>
+            <tbody id="browse-tbody"></tbody>
+          </table>
+          <div id="browse-empty" class="empty" hidden>No nodes match.</div>
+        </div>
+        <aside id="detail-panel" class="detail-panel" hidden>
+          <div class="detail-header">
+            <span id="detail-title" class="detail-title"></span>
+            <button id="detail-close" class="btn btn-ghost" aria-label="Close">×</button>
+          </div>
+          <div id="detail-body" class="detail-body"></div>
+        </aside>
+      </section>
+    </section>
+
+    <section id="tab-recall" class="tab-panel" role="tabpanel" hidden>
+      <aside class="sidebar recall-form">
+        <label class="form-row">
+          <span class="form-label">Observation <span class="req">*</span></span>
+          <textarea id="recall-observation" rows="4" placeholder="What is the agent reacting to right now?"></textarea>
+        </label>
+        <label class="form-row">
+          <span class="form-label">Mode</span>
+          <select id="recall-mode">
+            <option value="semantic_memory">semantic_memory (facts)</option>
+            <option value="procedural_memory">procedural_memory (workflows)</option>
+            <option value="episodic_memory">episodic_memory (raw)</option>
+          </select>
+        </label>
+        <label class="form-row">
+          <span class="form-label">Query tags <span class="form-hint">(comma-separated)</span></span>
+          <input id="recall-tags" type="text" placeholder="auth, fastapi">
+        </label>
+        <label class="form-row">
+          <span class="form-label">Subgoal (procedural only)</span>
+          <input id="recall-subgoal" type="text" placeholder="deploy to staging">
+        </label>
+        <details class="form-row">
+          <summary>Advanced</summary>
+          <label class="form-row">
+            <span class="form-label">Goal</span>
+            <input id="recall-goal" type="text">
+          </label>
+          <label class="form-row">
+            <span class="form-label">State</span>
+            <input id="recall-state" type="text">
+          </label>
+          <label class="form-row check">
+            <input type="checkbox" id="recall-auto-plan">
+            <span>Auto-plan via LLM <span class="form-hint">(uses LLM + costs tokens)</span></span>
+          </label>
+        </details>
+        <button id="recall-run" class="btn btn-primary">Run trace</button>
+      </aside>
+      <section class="content">
+        <div id="recall-empty" class="empty">Submit a query to see the trace.</div>
+        <div id="recall-results" hidden></div>
+      </section>
+    </section>
+
+    <section id="tab-graph" class="tab-panel" role="tabpanel" hidden>
+      <aside class="sidebar graph-sidebar">
+        <div class="form-row">
+          <span class="form-label">Node types</span>
+          <div id="graph-type-toggles" class="chip-row toggle-row"></div>
+        </div>
+        <label class="form-row check">
+          <input type="checkbox" id="graph-include-inactive" checked>
+          <span>Include inactive semantics</span>
+        </label>
+        <div class="form-row">
+          <span class="form-label">Layout</span>
+          <select id="graph-layout">
+            <option value="cose">cose (force)</option>
+            <option value="concentric">concentric</option>
+            <option value="breadthfirst">breadth-first</option>
+            <option value="grid">grid</option>
+          </select>
+        </div>
+        <label class="form-row">
+          <span class="form-label">Node limit</span>
+          <input id="graph-node-limit" type="number" min="10" max="5000" step="50" value="500">
+        </label>
+        <div class="form-row btn-row">
+          <button id="graph-refresh" class="btn btn-primary">Refresh</button>
+          <button id="graph-fit" class="btn">Fit</button>
+          <button id="graph-export" class="btn">PNG</button>
+        </div>
+        <div id="graph-counts" class="hint"></div>
+        <div id="graph-legend" class="graph-legend"></div>
+      </aside>
+      <section class="content graph-content">
+        <div id="graph-canvas" class="graph-canvas"></div>
+        <div id="graph-office" class="graph-office" hidden></div>
+        <div id="graph-empty" class="empty graph-empty">Pick a graph and click Refresh.</div>
+        <aside id="graph-detail" class="graph-detail-card" hidden>
+          <div class="detail-header">
+            <span id="graph-detail-title" class="detail-title"></span>
+            <button id="graph-detail-close" class="btn btn-ghost" aria-label="Close">×</button>
+          </div>
+          <div id="graph-detail-body" class="detail-body"></div>
+        </aside>
+      </section>
+    </section>
+  </main>
+
+    <section id="tab-sessions" class="tab-panel" role="tabpanel" hidden>
+      <aside class="sidebar sessions-sidebar">
+        <div class="form-row">
+          <span class="form-label">Sessions</span>
+          <div id="sessions-list" class="sessions-list"></div>
+          <div id="sessions-empty" class="hint" hidden>No sessions yet.</div>
+        </div>
+      </aside>
+      <section class="content sessions-content">
+        <div id="sessions-header" class="sessions-header" hidden></div>
+        <div id="sessions-timeline" class="sessions-timeline"></div>
+        <div id="sessions-placeholder" class="empty">Pick a session.</div>
+        <aside id="sessions-detail" class="graph-detail-card" hidden>
+          <div class="detail-header">
+            <span id="sessions-detail-title" class="detail-title"></span>
+            <button id="sessions-detail-close" class="btn btn-ghost" aria-label="Close">×</button>
+          </div>
+          <div id="sessions-detail-body" class="detail-body"></div>
+        </aside>
+      </section>
+    </section>
+  </main>
+
+  <script src="https://unpkg.com/cytoscape@3.30.4/dist/cytoscape.min.js"></script>
+  <script type="module" src="app.js"></script>
+</body>
+</html>

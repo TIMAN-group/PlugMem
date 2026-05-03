@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "plugmem"
+version = "0.1.0"
+description = "Pluggable memory system for LLM agents"
+requires-python = ">=3.10"
+dependencies = [
+    "chromadb>=0.5",
+    "fastapi>=0.100",
+    "uvicorn[standard]>=0.20",
+    "openai>=1.0",
+    "numpy>=1.24",
+    "requests>=2.28",
+    "pyyaml>=6.0",
+    "pydantic>=2.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-asyncio>=0.21",
+    "httpx>=0.24",
+]
+
+[tool.setuptools.packages.find]
+include = ["plugmem*"]
