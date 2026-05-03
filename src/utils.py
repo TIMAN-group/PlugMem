@@ -13,12 +13,13 @@ from tqdm import tqdm
 from typing import List, Dict, Any, Tuple, Set, Optional
 
 MAX_TRY=5
+MAX_EMBEDDING_INPUT_CHARS = 8192   # truncate text passed to any embedding backend
 DEFAULT_EMBEDDING_MODEL_NAME = "NV-Embed-v2"
 DEFAULT_LLM_NAME = "qwen-2.5-32b-instruct"
 DEFAULT_LLM_NAME_ALIAS = ["qwen-2.5-32b-instruct",
                     "qwen2.5-32b-instruct",
                     "Qwen2.5-7B-Instruct",
-                    "Qwen/Qwen2.5-7B-Instruct", 
+                    "Qwen/Qwen2.5-7B-Instruct",
                     "CalamitousFelicitousness/Qwen2.5-32B-Instruct-fp8-dynamic"]
 
 
@@ -87,22 +88,96 @@ def set_logger(
 # ----------------------------
 # LLM API
 # ----------------------------
-def wrapper_call_model(model_name: str=None,messages:List[Dict[str, str]]=None,prompt=None,temperature=0, top_p=1.0, max_tokens=4096, token_usage_file=None,) -> str:
-    model_name = model_name or os.environ.get("LLM_NAME",None) or DEFAULT_LLM_NAME
-    token_usage_file = os.environ.get("TOKEN_USAGE_FILE", None)  # *.jsonl
+def wrapper_call_model(
+    model_name: str = None,
+    messages: List[Dict[str, str]] = None,
+    prompt=None,
+    temperature=0,
+    top_p=1.0,
+    max_tokens=4096,
+    token_usage_file=None,
+    system_prompt: str = "You are a helpful assistant.",
+) -> str:
+    """Unified LLM caller. Two routes, picked from env:
+
+      1. Azure OpenAI — when AZURE_ENDPOINT is set. Uses OPENAI_API_KEY for
+         auth and AZURE_ENDPOINT for the base url.
+      2. OpenAI-compatible API — otherwise. The OpenAI SDK natively reads
+         OPENAI_BASE_URL and OPENAI_API_KEY from env, so any OpenAI-
+         compatible provider (vanilla OpenAI, OpenRouter, vLLM, etc.) works
+         by pointing OPENAI_BASE_URL at it.
+
+    The model id is passed through verbatim — caller picks it via
+    `model_name`, env var `LLM_NAME`, or falls back to `DEFAULT_LLM_NAME`.
+    """
+    model_name = model_name or os.environ.get("LLM_NAME") or DEFAULT_LLM_NAME
+    token_usage_file = os.environ.get("TOKEN_USAGE_FILE", None)
     if token_usage_file is not None:
-        token_usage_file = token_usage_file.replace(".jsonl", f"_{model_name}.jsonl")
-        
-    if model_name.lower() in DEFAULT_LLM_NAME_ALIAS:
-        return call_qwen(messages=messages, prompt=prompt, temperature=temperature, top_p=top_p, max_tokens=max_tokens, token_usage_file=token_usage_file)  
-    elif model_name in ["4o","4o-mini","4.1","o1","5.1","5.2"]:
-        return call_gpt(model_id=model_name, messages=messages, prompt=prompt, temperature=temperature, top_p=top_p, max_tokens=max_tokens, token_usage_file=token_usage_file)
-    elif model_name.lower() == "deepseek-v3-0324":
-        return call_dpsk(model_id="DeepSeek-V3-0324", messages=messages, prompt=prompt, temperature=temperature, top_p=top_p, max_tokens=max_tokens, token_usage_file=token_usage_file)
-    return call_llm_openrouter_api(model_name=model_name, messages=messages, prompt=prompt, temperature=temperature, top_p=top_p, max_tokens=max_tokens, token_usage_file=token_usage_file)
+        token_usage_file = token_usage_file.replace(
+            ".jsonl", f"_{model_name.replace('/', '_').replace(':', '_')}.jsonl"
+        )
+
+    if messages is None:
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": prompt or ""},
+        ]
+
+    azure_endpoint = os.environ.get("AZURE_ENDPOINT", None)
+    api_key = os.environ.get("OPENAI_API_KEY", None)
+    if azure_endpoint:
+        client = AzureOpenAI(
+            azure_endpoint=azure_endpoint,
+            api_key=api_key,
+            api_version="2024-12-01-preview",
+        )
+    else:
+        # OpenAI() picks up OPENAI_BASE_URL + OPENAI_API_KEY from env.
+        client = OpenAI()
+
+    last_err = None
+    for attempt in range(1, MAX_TRY + 1):
+        try:
+            response = client.chat.completions.create(
+                model=model_name,
+                messages=messages,
+                temperature=temperature,
+                top_p=top_p,
+                max_tokens=max_tokens,
+            )
+            content = response.choices[0].message.content or ""
+            usage = response.usage
+            if token_usage_file is not None and usage is not None:
+                os.makedirs(os.path.dirname(token_usage_file) or ".", exist_ok=True)
+                with open(token_usage_file, "a", encoding="utf-8") as f:
+                    rec = {
+                        "model": model_name,
+                        "prompt_first100": messages[-1]["content"][:100],
+                    }
+                    rec.update(usage.model_dump())
+                    f.write(json.dumps(rec) + "\n")
+            return content.strip()
+        except openai.AuthenticationError as e:
+            print(f"[wrapper_call_model] auth error: {e}")
+            return None
+        except openai.RateLimitError as e:
+            last_err = e
+            print(f"[wrapper_call_model] attempt {attempt}/{MAX_TRY} rate-limited: {e}")
+            time.sleep(10)
+        except Exception as e:
+            last_err = e
+            print(f"[wrapper_call_model] attempt {attempt}/{MAX_TRY}: {e}")
+            time.sleep(5)
+    raise RuntimeError(
+        f"wrapper_call_model failed after {MAX_TRY} attempts: {last_err}"
+    )
 
 
-
+# ----------------------------
+# Legacy LLM callers — kept for reference. Prefer `wrapper_call_model`;
+# direct call sites in the codebase are being migrated.
+# ----------------------------
+# legacy: kept for reference; prefer wrapper_call_model
 def call_llm_openrouter_api(model_name,messages=None,prompt=None,temperature=0, top_p=1.0, max_tokens=4096, token_usage_file=None, ):
     url = f"https://openrouter.ai/api/v1/chat/completions"
     OPENROUTER_API_KEY = os.environ["OPENROUTER_API_KEY"]
@@ -110,12 +185,10 @@ def call_llm_openrouter_api(model_name,messages=None,prompt=None,temperature=0, 
             "Content-Type": "application/json",
             "Authorization": f"Bearer {OPENROUTER_API_KEY}",
                }
-    
     if messages == None:
         messages = [
             {"role": "user", "content": prompt}
         ]
-    
     data = {
         "model": model_name,
         "messages": messages,
@@ -127,7 +200,7 @@ def call_llm_openrouter_api(model_name,messages=None,prompt=None,temperature=0, 
         try:
             response = requests.post(url, headers=headers, data=json.dumps(data))
             usage = response.json()["usage"]
-            response.raise_for_status()  
+            response.raise_for_status()
             usage = response.json()["usage"]
             usage_log = token_usage_file or os.environ.get("TOKEN_USAGE_FILE") or None
             if usage_log is not None:
@@ -136,27 +209,21 @@ def call_llm_openrouter_api(model_name,messages=None,prompt=None,temperature=0, 
                     usage_json.update(usage)
                     f.write(json.dumps(usage_json) + "\n")
             return response.json()["choices"][0]["message"]["content"]
-
         except ImportError:
             print("Need to install openai library: pip install openai")
-
         except requests.exceptions.SSLError as e:
             print(f"[Attempt {attempt}/{MAX_TRY}] SSL error: {e}")
         except requests.exceptions.RequestException as e:
             print(f"[Attempt {attempt}/{MAX_TRY}] Request error: {e}")
-
         time.sleep(5)
-    return  ""
+    return ""
 
 
-def call_qwen(prompt = None, messages = None, temperature=0, top_p=1.0, max_tokens=4096, token_usage_file=None, system_prompt="You are a helpful assistant."):
+# legacy: kept for reference; prefer wrapper_call_model
+def call_qwen(prompt=None, messages=None, temperature=0, top_p=1.0, max_tokens=4096, token_usage_file=None, system_prompt="You are a helpful assistant."):
     VLLM_QWEN_API_KEY = os.environ["VLLM_QWEN_API_KEY"]
     QWEN_BASE_URL = os.environ["QWEN_BASE_URL"]
-    client = OpenAI(
-        base_url=QWEN_BASE_URL,
-        api_key=VLLM_QWEN_API_KEY,
-    )
-    
+    client = OpenAI(base_url=QWEN_BASE_URL, api_key=VLLM_QWEN_API_KEY)
     if messages == None:
         messages = [
             {"role": "system", "content": system_prompt},
@@ -166,12 +233,9 @@ def call_qwen(prompt = None, messages = None, temperature=0, top_p=1.0, max_toke
     for attempt in range(1, MAX_TRY + 1):
         try:
             response = client.chat.completions.create(
-                model=model_id,
-                messages=messages,
-                temperature=temperature,
-                top_p=top_p,
-                max_tokens=max_tokens,
-            )    
+                model=model_id, messages=messages,
+                temperature=temperature, top_p=top_p, max_tokens=max_tokens,
+            )
             usage = response.usage
             usage_log = token_usage_file or os.environ.get("TOKEN_USAGE_FILE") or None
             if usage_log is not None:
@@ -180,26 +244,19 @@ def call_qwen(prompt = None, messages = None, temperature=0, top_p=1.0, max_toke
                     usage_json.update(usage.model_dump())
                     f.write(json.dumps(usage_json) + "\n")
             return response.choices[0].message.content
-
         except ImportError:
             print("Need to install openai library: pip install openai")
-
         except Exception as e:
             print(f"[Attempt {attempt}/{MAX_TRY}]. Error: {e}")
-
         time.sleep(5)
-    return  ""
+    return ""
 
 
-
-def call_dpsk(prompt = None, messages = None, model_id="DeepSeek-V3-0324", temperature=0, top_p=1.0, max_tokens=4096, token_usage_file=None, system_prompt="You are a helpful assistant.", ):
-    import os
-    from openai import AzureOpenAI
-
+# legacy: kept for reference; prefer wrapper_call_model
+def call_dpsk(prompt=None, messages=None, model_id="DeepSeek-V3-0324", temperature=0, top_p=1.0, max_tokens=4096, token_usage_file=None, system_prompt="You are a helpful assistant."):
     api_version = "2024-05-01-preview"
     AZURE_DPSK_API_KEY = os.environ.get("AZURE_DPSK_API_KEY", None)
     AZURE_DPSK_ENDPOINT = os.environ.get("AZURE_DPSK_ENDPOINT", None)
-    
     client = AzureOpenAI(
         api_version=api_version,
         azure_endpoint=AZURE_DPSK_ENDPOINT,
@@ -208,26 +265,19 @@ def call_dpsk(prompt = None, messages = None, model_id="DeepSeek-V3-0324", tempe
     num_attempts = 0
     if messages == None:
         messages = [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": prompt},
-                ]
-        
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": prompt},
+        ]
     while True:
         if num_attempts >= MAX_TRY:
             raise ValueError("OpenAI request failed.")
         try:
             response = client.chat.completions.create(
-                model=model_id,
-                messages=messages,
-                temperature=temperature,
-                top_p=top_p,
-                max_tokens=max_tokens,
-                frequency_penalty=0,
-                presence_penalty=0,
-                stop=None
+                model=model_id, messages=messages,
+                temperature=temperature, top_p=top_p, max_tokens=max_tokens,
+                frequency_penalty=0, presence_penalty=0, stop=None
             )
-            usage = response.usage  # prompt_tokens, completion_tokens, total_tokens
-
+            usage = response.usage
             usage_log = token_usage_file or os.environ.get("TOKEN_USAGE_FILE") or None
             if usage_log is not None:
                 with open(usage_log, "a") as f:
@@ -236,49 +286,34 @@ def call_dpsk(prompt = None, messages = None, model_id="DeepSeek-V3-0324", tempe
                     f.write(json.dumps(usage_json) + "\n")
             return response.choices[0].message.content.strip()
         except openai.AuthenticationError as e:
-            print(e)
-            return None
+            print(e); return None
         except openai.RateLimitError as e:
-            print(e)
-            print("Sleeping for 10s...")
-            time.sleep(10)
-            num_attempts += 1
+            print(e); time.sleep(10); num_attempts += 1
         except Exception as e:
-            print(e)
-            print("Sleeping for 10s...")
-            time.sleep(10)
-            num_attempts += 1
+            print(e); time.sleep(10); num_attempts += 1
 
 
-
-def call_gpt(prompt = None, messages = None, model_id="gpt-4o", temperature=0, top_p=1.0, max_tokens=4096, token_usage_file=None, system_prompt="You are a helpful assistanct."):
+# legacy: kept for reference; prefer wrapper_call_model
+def call_gpt(prompt=None, messages=None, model_id="gpt-4o", temperature=0, top_p=1.0, max_tokens=4096, token_usage_file=None, system_prompt="You are a helpful assistanct."):
     OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", None)
     AZURE_ENDPOINT = os.environ.get("AZURE_ENDPOINT", None)
-    client = OpenAI() if not AZURE_ENDPOINT else AzureOpenAI(azure_endpoint = AZURE_ENDPOINT, api_key=OPENAI_API_KEY, api_version="2024-12-01-preview")
-    
+    client = OpenAI() if not AZURE_ENDPOINT else AzureOpenAI(azure_endpoint=AZURE_ENDPOINT, api_key=OPENAI_API_KEY, api_version="2024-12-01-preview")
     if messages == None:
         messages = [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": prompt},
-                ]
-        
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": prompt},
+        ]
     num_attempts = 0
     while True:
         if num_attempts >= MAX_TRY:
             raise ValueError("OpenAI request failed.")
         try:
             response = client.chat.completions.create(
-                model=model_id,
-                messages=messages,
-                temperature=temperature,
-                top_p=top_p,
-                max_tokens=max_tokens,
-                frequency_penalty=0,
-                presence_penalty=0,
-                stop=None
+                model=model_id, messages=messages,
+                temperature=temperature, top_p=top_p, max_tokens=max_tokens,
+                frequency_penalty=0, presence_penalty=0, stop=None
             )
-            usage = response.usage  # prompt_tokens, completion_tokens, total_tokens
-
+            usage = response.usage
             usage_log = token_usage_file or os.environ.get("TOKEN_USAGE_FILE") or None
             if usage_log is not None:
                 with open(usage_log, "a") as f:
@@ -287,51 +322,107 @@ def call_gpt(prompt = None, messages = None, model_id="gpt-4o", temperature=0, t
                     f.write(json.dumps(usage_json) + "\n")
             return response.choices[0].message.content.strip()
         except openai.AuthenticationError as e:
-            print(e)
-            return None
+            print(e); return None
         except openai.RateLimitError as e:
-            print(e)
-            print("Sleeping for 10s...")
-            time.sleep(10)
-            num_attempts += 1
+            print(e); time.sleep(10); num_attempts += 1
         except Exception as e:
-            print(e)
-            print("Sleeping for 10s...")
-            time.sleep(10)
-            num_attempts += 1
-
-
+            print(e); time.sleep(10); num_attempts += 1
 
 
 # ----------------------------
 # Embedding Model API
 # ----------------------------
-def get_embedding(text, embedding_model=None):
-    MAX_TRY = 5
-    
-    model_name = "nvidia/NV-Embed-v2"
-    url = os.environ["EMBEDDING_BASE_URL"]
-    text = text[:8192]
+_LOCAL_EMBEDDING_MODEL = None  # cached SentenceTransformer instance
 
-    # print(f"using {model_name}")
-    
-    for attempt in range(1, MAX_TRY + 1):
+
+def _get_embedding_local(text: str, model_name: str = "nvidia/NV-Embed-v2"):
+    """Compute an embedding by loading the model locally via
+    sentence-transformers. The model is loaded on first use and cached for
+    subsequent calls. Requires `sentence-transformers` to be installed and
+    the model weights to be reachable (HF cache or downloadable)."""
+    global _LOCAL_EMBEDDING_MODEL
+    if _LOCAL_EMBEDDING_MODEL is None:
         try:
-            headers = {"Content-Type": "application/json",}
-            data = {"model": model_name,"input": text,}
-            response = requests.post(url, json=data, headers=headers, timeout=60)
-            response.raise_for_status()
-            result = response.json()
-            embedding = result["data"][0]["embedding"]
-            # print("√ Embedding generated")
-            return embedding
+            from sentence_transformers import SentenceTransformer
+        except ImportError as e:
+            raise RuntimeError(
+                "Local embedding requires `sentence-transformers`. "
+                "Install with: pip install sentence-transformers"
+            ) from e
+        _LOCAL_EMBEDDING_MODEL = SentenceTransformer(
+            model_name, trust_remote_code=True
+        )
+    emb = _LOCAL_EMBEDDING_MODEL.encode(
+        text[:MAX_EMBEDDING_INPUT_CHARS],
+        convert_to_numpy=True,
+        normalize_embeddings=False,
+    )
+    return emb.tolist()
 
-        except Exception as e:
-            print(f"[Attempt {attempt}/{MAX_TRY}] error: {repr(e)}", flush=True)
 
-        time.sleep(5.0)
+def get_embedding(text, embedding_model=None):
+    """Embed `text`. Tries three backends in order, returning the first
+    success; raises RuntimeError if all are exhausted.
 
-    return None
+      1. Self-hosted server at EMBEDDING_BASE_URL (skipped if env unset).
+      2. Third-party OpenAI-compatible embeddings API at
+         EMBEDDING_API_BASE_URL + EMBEDDING_API_KEY (falls back to
+         OPENAI_BASE_URL + OPENAI_API_KEY).
+      3. Local model loaded via sentence-transformers (NV-Embed-v2 by
+         default).
+    """
+    text = (text or "")[:MAX_EMBEDDING_INPUT_CHARS]
+    errors: List[str] = []
+    per_backend_tries = 3
+
+    # 1. self-hosted server
+    base_url = os.environ.get("EMBEDDING_BASE_URL")
+    if base_url:
+        model_id = embedding_model or "nvidia/NV-Embed-v2"
+        for attempt in range(1, per_backend_tries + 1):
+            try:
+                resp = requests.post(
+                    base_url,
+                    json={"model": model_id, "input": text},
+                    headers={"Content-Type": "application/json"},
+                    timeout=60,
+                )
+                resp.raise_for_status()
+                return resp.json()["data"][0]["embedding"]
+            except Exception as e:
+                errors.append(f"self-hosted attempt {attempt}: {repr(e)}")
+                time.sleep(2)
+
+    # 2. third-party OpenAI-compatible API
+    api_url = (os.environ.get("EMBEDDING_API_BASE_URL")
+               or os.environ.get("OPENAI_BASE_URL"))
+    api_key = (os.environ.get("EMBEDDING_API_KEY")
+               or os.environ.get("OPENAI_API_KEY"))
+    if api_url and api_key:
+        model_id = (embedding_model
+                    or os.environ.get("EMBEDDING_MODEL_NAME")
+                    or DEFAULT_EMBEDDING_MODEL_NAME)
+        for attempt in range(1, per_backend_tries + 1):
+            try:
+                client = OpenAI(base_url=api_url, api_key=api_key)
+                resp = client.embeddings.create(model=model_id, input=text)
+                return list(resp.data[0].embedding)
+            except Exception as e:
+                errors.append(f"third-party API attempt {attempt}: {repr(e)}")
+                time.sleep(2)
+
+    # 3. local
+    try:
+        return _get_embedding_local(
+            text, model_name=embedding_model or "nvidia/NV-Embed-v2"
+        )
+    except Exception as e:
+        errors.append(f"local: {repr(e)}")
+
+    raise RuntimeError(
+        "get_embedding failed for all backends. Errors:\n  "
+        + "\n  ".join(errors)
+    )
 
 
 # ----------------------------
