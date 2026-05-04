@@ -1,26 +1,46 @@
 # PlugMem
-![](assets/plugmem_name_card.png)
+<p align="center">
+  <img src="assets/plugmem_name_card.png" alt="PlugMem"/>
+</p>
 
-**PlugMem** is a **plug-and-play long-term memory system for LLM agents**. Instead of storing and retrieving raw interaction histories, PlugMem organizes experience into **compact, reusable knowledge units**, allowing agents to recall what matters with minimal context overhead.
+**PlugMem** is a **plug-and-play long-term memory system for LLM agents**. Instead of storing and retrieving raw interaction histories, PlugMem organizes experience into **compact, reusable knowledge units**, allowing agents to recall what matters to agent decision-making with minimal context overhead.
 
 The module is **task-agnostic by design** and can be integrated into existing agent pipelines with minimal effort, serving as a general memory backbone for diverse environments such as dialogue agents, knowledge-intensive QA, and web automation. 
 
 For more details, please see the full paper: [https://arxiv.org/abs/2603.03296](https://arxiv.org/abs/2603.03296)
 
-![](assets/plugmem_pipeline.png)
+<p align="center">
+  <img src="assets/plugmem_pipeline.png" alt="PlugMem Pipeline"/>
+</p>
+
+## Table of Contents
+
+- [Updates](#updates)
+- [Features](#features)
+  - [Plug-in](#plug-in)
+  - [Memory](#memory)
+- [Installation](#installation)
+- [Quick Start](#quick-start)
+- [Reproducibility](#reproducibility)
+- [Citation](#citation)
+
+## Updates
+
+- **[2026-05]** 🚀 **Plugin release** — PlugMem now ships as installable plugins for AI coding agents.
+  Integrations available for **[OpenClaw](openclaw-plugmem-plugin/)** and **Claude Code** (see `plugin` branch).
+  Highlights: inspect your memory graph, test retrieval interactively, and replay past agent sessions.
+
+  <p align="center">
+    <img src="assets/plugmem_promotion_headline.png" alt="PlugMem Plugin" width="700"/>
+  </p>
+
+- **[2026-05]** 🏆 **New SOTA on LongMemEval & HotpotQA** — With light task adaptation, PlugMem reaches
+  **90.2 Acc** on LongMemEval and **79.1 F1 / 91.1% LLM-Judge Acc** on HotpotQA (multi-hop), both
+  state-of-the-art results. Because the framework is task-agnostic, it can serve as a drop-in backbone for other work on these benchmarks. → [Step-by-step reproduction guide](examples/task-adaptation/)
+
+- **[2026-04]** 🎉 **PlugMem accepted to ICML 2026!**
 
 ## Features
-### Memory
-- **Three Memory Types**: 
-  - **Semantic** (facts, concepts): User preferences, factual information
-  - **Procedural** (workflows, procedures): How-to knowledge, step-by-step processes
-  - **Episodic** (interaction sequences): Long interaction sessions stored on disk, referenced by ID
-- **Graph Structure**: Maintain hierarchical knowledge units to illustrate the relationship between memories.
-- **LLM Enhancement**: Use LLMs for intelligent knowledge extraction, memory retrieval, and reasoning
-- **Memory Compression and Evolution**: Naively support updating and evolving the memory graph.
-
-![](assets/plugmem_structuring.png)
-
 ### Plug-in
 - **Enhance your agent with 6 lines of code**
 ```python
@@ -36,6 +56,30 @@ mg.insert(mem)
 mg.retrieve_and_reason(...)
 ```
 - **Easy to modify**: Apply adaptive strategies by defining different value functions and reasoning prompts.
+- **Agent integrations**: Native plugins available for **[OpenClaw](openclaw-plugmem-plugin/)** and **Claude Code** (see `plugin` branch), with a built-in **Memory Inspector** UI for visualizing the memory graph, browsing individual memories, testing retrieval, and replaying agent trajectories.
+
+<p align="center">
+  <img src="assets/plugmem_memory_inspector.png" alt="Memory Inspector — Graph view" width="800"/>
+  <br/><em>Graph view: explore the full memory graph across semantic, procedural, and episodic nodes</em>
+</p>
+
+<p align="center">
+  <img src="assets/plugmem_memory_inspector_2.png" alt="Memory Inspector — Browse view" width="800"/>
+  <br/><em>Browse view: inspect, filter, and manage individual memory entries</em>
+</p>
+
+### Memory
+- **Three Memory Types**: 
+  - **Semantic** (facts, concepts): User preferences, factual information
+  - **Procedural** (workflows, procedures): How-to knowledge, step-by-step processes
+  - **Episodic** (interaction sequences): Long interaction sessions stored on disk, referenced by ID
+- **Graph Structure**: Maintain hierarchical knowledge units to illustrate the relationship between memories.
+- **LLM Enhancement**: Use LLMs for intelligent knowledge extraction, memory retrieval, and reasoning
+- **Memory Compression and Evolution**: Naively support updating and evolving the memory graph.
+
+<p align="center">
+  <img src="assets/plugmem_structuring.png" alt="PlugMem Structuring"/>
+</p>
 
 ## Installation
 1. Install benchmarks in `src/` and follow their installation docs to set up the environment.
