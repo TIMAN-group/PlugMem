@@ -7,6 +7,7 @@ from memory_structuring.prompt_structuring import (
     GetSemanticPrompt,
     GetProceduralPrompt,
     GetReturnPrompt,
+    GetSemanticPrompt_LongMemEval,
 )
 
 def get_subgoal(goal, state_t0, observation_t0, action_t0):
@@ -74,6 +75,42 @@ def get_semantic(step, trajectory_num=0, turn_num=0, time=0):
         #     semantic_memory[len(semantic_memory)-1]["st_ed"] = "ed"
     for i in range(len(semantic_memory)):
         print(semantic_memory[i])
+    return semantic_memory
+
+def get_semantic_longmemeval(step, trajectory_num, turn_num, time = None):
+    prompt_obj = GetSemanticPrompt_LongMemEval()
+    
+    variables = {"episodic_memory": "Turn 0:\n" + step["observation"]}
+    messages = prompt_obj.render(variables)
+    response = call_qwen(messages=[{"role": m.role, "content": m.content} for m in messages])
+    summaries = re.findall(r'\*\*Summary:\*\* (.*?)(?=\n\d+\.|\Z)', response, re.DOTALL)
+    summaries = [s.strip() for s in summaries]
+    semantic_memory = []
+
+    for idx, summary in enumerate(summaries):
+        semantic_memory.append({
+            "semantic_memory": summary,
+            "tags": [],
+            'trajectory_num': trajectory_num,
+            "turn_num" : turn_num,
+            "time": time,
+        })
+    
+    variables = {"episodic_memory": "Turn 0:\n" + step["action"]}
+    messages = prompt_obj.render(variables)
+    response = call_qwen(messages=[{"role": m.role, "content": m.content} for m in messages])
+    summaries = re.findall(r'\*\*Summary:\*\* (.*?)(?=\n\d+\.|\Z)', response, re.DOTALL)
+    summaries = [s.strip() for s in summaries]
+
+    for idx, summary in enumerate(summaries):
+        semantic_memory.append({
+            "semantic_memory": summary,
+            "tags": [],
+            'trajectory_num': trajectory_num,
+            "turn_num" : turn_num,
+            "time": time,
+        })
+        
     return semantic_memory
 
 def get_return(subgoal: str, procedural_memory: str):

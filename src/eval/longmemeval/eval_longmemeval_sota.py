@@ -9,7 +9,7 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 parent_dir = os.path.abspath(os.path.join(current_dir, "../.."))
 # 添加到 sys.path
 sys.path.append(parent_dir)
-from memory_structuring.memory import Memory
+from memory_structuring.memory import Memory, Memory_LongMemEval
 from memory_retrieving.memory_graph import MemoryGraph
 from memory_retrieving.value_longmemeval import TagEqual, TagRelevant, SemanticEqual, SemanticRelevant, SubgoalEqual, SubgoalRelevant, ProceduralEqual, ProceduralRelevant
 from utils import wrapper_call_model,load_json,dump_json
@@ -20,31 +20,33 @@ def load_run_prompt() -> str:
         return f.read()
 run_prompt_template = load_run_prompt()
 print("Loading...")
-with open("../../LongMemEval/data/longmemeval_s_cleaned.json", "r") as f:
+with open("/home/test/test1711/czx/PM/src/LongMemEval/data/longmemeval_s_cleaned.json", "r") as f:
     data = json.load(f)
 print("Loading done")
 
-
-def _build_memory_from_session(session, time):
+def _build_memory_from_session(session, time, session_id):
     goal = "Answer user's question"
     if session[0]['role'] == 'user':
-        memory = Memory(goal=goal, observation=session[0]["content"], time = f"Date: {time}")
+        memory = Memory_LongMemEval(goal=goal, observation=f"User Say: {session[0]['content']}", time = f"Date: {time}", session_id = session_id)
         st = 1
     else:
-        memory = Memory(goal=goal, observation="User: ...")
+        memory = Memory_LongMemEval(goal=goal, observation="User Say: ...", time = f"Date: {time}", session_id = session_id)
         st = 0
-    action = None
+    action = "Agent Say: ..."
     for turn in session[st:]:
         if turn["role"] == "assistant":
             action = f"Agent Say: {turn['content']}"
         else:
-            if action is None:
-                raise ValueError("Encountered user turn before any assistant action in session.")
             memory.append(
                 action_t0=action,
                 observation_t1=f"User Say: {turn['content']}"
             )
-            action = None
+            action = "Agent Say: ..."
+    if session[-1]["role"] == "assistant":
+        memory.append(
+            action_t0=action,
+            observation_t1=f"User Say: ..."
+        )
     memory.close()
     return memory
 
@@ -87,7 +89,7 @@ for n in range(500):
         input.write(json.dumps(_json) + "\n")
     messages, memory_map, sel_type = mg.retrieve_memory(goal=goal, observation=question, time=f"Date: {test['question_date']}", task_type=task_type)#6
     memory_str = memory_map[sel_type]
-    response = wrapper_call_model(model_name="gpt-4o", messages=messages)#7
+    response = wrapper_call_model(model_name="gpt-5.4", messages=messages)#7
     information = response
     with open("../../../data_longmemeval/reasoning.jsonl", "a",) as input:
         _json = {
@@ -101,7 +103,7 @@ for n in range(500):
         question=question,
         time=test['question_date']
     )
-    response = wrapper_call_model(model_name="gpt-4o", messages=[
+    response = wrapper_call_model(model_name="gpt-5.4", messages=[
         {"role": "system", "content": "You are a helpful assistant"},
         {"role": "user", "content": prompt_run}
     ])

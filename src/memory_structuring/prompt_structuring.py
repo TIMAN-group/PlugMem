@@ -229,6 +229,45 @@ class GetSemanticPrompt(PromptBase):
             ChatMessage("user", self.format_text(user_template, variables)),
         ]
 
+class GetSemanticPrompt_LongMemEval(PromptBase):
+    def build_messages(self, variables: Mapping[str, object]) -> List[ChatMessage]:
+        system_template = (
+            "You are a helpful assistant. "
+        )
+        user_template = (
+            'Task Description: Given a session of dialogue between User and Agent, extract the personal summaries of User and Agent. Ensure the output adheres to the following rules:\n'
+            'Output results in OUTPUT format. The top-level tittle is "### Memory". The value should be a list of dictionaries, where each dictionary has the key "Summary":\n'
+            '- summary: A concise personal summary, which captures relevant information about User experiences, preferences, and background, across multiple turns.\n'
+            'If no personal summary can be extracted, return NO_TRAIT.\n'
+            'Example:\n'
+            'INPUT:\n'
+            'Turn 0:\n'
+            '- User: Did you check out that new gym in town?\n'
+            '- Agent: Yeah, I did. I am not sure I like the vibe there, though.\n'
+            'Turn 1:\n'
+            '- User: What was wrong with it?\n'
+            '- Agent: The folks there seemed to care more about how they looked than working out. It was a little too trendy for me. I am pretty plain.\n'
+            'Turn 2:\n'
+            '- User: Ah, got it. Well, maybe one of the older gyms will work out better for you—or I guess you could get that treadmill you were talking about before. Are you leaning one way or the other yet?\n'
+            '- Agent: I am leaning towards the treadmill. I think it will work better for my lifestyle. I just do not know which type to get. There are so many choices out there. Do you use a treadmill at your gym? Do you have a suggestion for a home one?\n'
+            'Turn 3:\n'
+            '- User: I usually just lift weights there, to be honest. But I think I have heard good things about the NordicTrack?\n'
+            '- Agent: Yeah, I have heard good things about that, too. I like the idea of a multi-exercise piece of equipment. As long as the weather is not too bad, then I prefer to go for a run. But since it rains quite a bit here, I like the idea of an inside option. How is the weather in New England?\n'
+            'OUTPUT:\n'
+            '### Memory:\n'
+            "1. **Summary:** User asked about a new gym in town and suggested older gyms or a treadmill as alternatives.\n"
+            "2. **Summary:** User usually lifts weights at the gym rather than using a treadmill.\n"
+            "3. **Summary:** User has heard good things about the NordicTrack treadmill.\n"
+            "4. **Summary:** Agent have checked out the new gym in town.\n"
+            "5. **Summary:** Agent is leaning towards the treadmill.\n"
+            'Task: Follow the OUTPUT format demonstrated in the example above and extract the personal summaries for User from the following dialogue session.\n'
+            'Input: {episodic_memory}\n'
+            'Output:\n'
+        )
+        return [
+            ChatMessage("system", self.format_text(system_template, variables)),
+            ChatMessage("user", self.format_text(user_template, variables)),
+        ]
 
 class GetProceduralPrompt(PromptBase):
     def build_messages(self, variables: Mapping[str, object]) -> List[ChatMessage]:
