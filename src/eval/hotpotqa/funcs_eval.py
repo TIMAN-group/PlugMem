@@ -14,7 +14,7 @@ from string import Template
 current_dir = os.path.dirname(os.path.abspath(__file__))
 parent_dir = os.path.abspath(os.path.join(current_dir, "../.."))
 sys.path.append(parent_dir)
-from utils import call_qwen, call_gpt
+from utils import wrapper_call_model
 
 
 HOTPOTQA_QA_PATH="../../bench_data/hotpotqa_hipporag/hotpotqa.json"   
@@ -148,7 +148,7 @@ def rephrase_question(question: str, answer: str, max_try: int = 3, sleep_sec: f
     last_err = None
     for attempt in range(1, max_try + 1):
         try:
-            response = call_gpt(messages=messages)
+            response = wrapper_call_model(messages=messages)
             rephrased = _parse_rephrased_question(response)
             if rephrased is not None:
                 return rephrased

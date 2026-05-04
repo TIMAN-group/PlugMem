@@ -4,7 +4,7 @@ import json
 from tqdm import tqdm
 import argparse
 
-from utils import call_qwen,call_gpt,call_llm_openrouter_api
+from utils import wrapper_call_model
 from funcs_eval import extract_gold_context,single_exact_match,single_f1_score
 import random
 
@@ -68,12 +68,7 @@ def llm_run_qa(bench_name,model_name,context_type,max_qa_items):
         while True:
             if try_counts>=QA_MAX_TRY:
                 break
-            if model_name=="Qwen2.5-32B-Instruct":
-                pred=call_qwen(prompt)
-            elif model_name=="gpt-4o":
-                pred=call_gpt(prompt)
-            else: 
-                pred=call_llm_openrouter_api(prompt)
+            pred = wrapper_call_model(model_name=model_name, prompt=prompt)
                 
             try_counts+=1
             
