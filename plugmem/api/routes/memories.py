@@ -42,10 +42,11 @@ def _insert_trajectory(graph, body: MemoryInsertRequest) -> MemoryInsertResponse
 
     llm = get_llm()
     embedder = get_embedder()
+    initial_observation = body.initial_observation or body.steps[0].observation
 
     mem = Memory(
         goal=body.goal,
-        observation=body.steps[0].observation,
+        observation=initial_observation,
         llm=llm,
         embedder=embedder,
         time=graph.semantic_time,

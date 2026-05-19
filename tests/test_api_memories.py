@@ -63,6 +63,60 @@ def test_insert_trajectory_missing_goal(client):
     assert resp.status_code == 422
 
 
+def test_insert_trajectory_with_initial_observation(client):
+    client.post("/api/v1/graphs", json={"graph_id": "traj_initial"})
+    resp = client.post("/api/v1/graphs/traj_initial/memories", json={
+        "mode": "trajectory",
+        "goal": "finish task",
+        "initial_observation": "initial scene",
+        "steps": [
+            {"action": "click first", "observation": "after first click"},
+            {"action": "click second", "observation": "after second click"},
+        ],
+    })
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["status"] == "ok"
+    assert resp.json()["stats"]["episodic"] == 2
+
+    r = client.get("/api/v1/graphs/traj_initial/search?node_type=episodic&limit=10")
+    nodes = sorted(r.json()["nodes"], key=lambda node: node["episodic_id"])
+    assert nodes[0]["observation"] == "initial scene"
+    assert nodes[0]["action"] == "click first"
+    assert nodes[1]["observation"] == "after first click"
+    assert nodes[1]["action"] == "click second"
+
+
+def test_insert_trajectory_without_initial_observation_uses_first_step(client):
+    client.post("/api/v1/graphs", json={"graph_id": "traj_legacy"})
+    resp = client.post("/api/v1/graphs/traj_legacy/memories", json={
+        "mode": "trajectory",
+        "goal": "finish task",
+        "steps": [
+            {"action": "click first", "observation": "legacy first observation"},
+            {"action": "click second", "observation": "legacy second observation"},
+        ],
+    })
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["status"] == "ok"
+    assert resp.json()["stats"]["episodic"] == 2
+
+    r = client.get("/api/v1/graphs/traj_legacy/search?node_type=episodic&limit=10")
+    nodes = sorted(r.json()["nodes"], key=lambda node: node["episodic_id"])
+    assert nodes[0]["observation"] == "legacy first observation"
+    assert nodes[0]["action"] == "click first"
+
+
+def test_insert_trajectory_empty_steps_still_fails_with_initial_observation(client):
+    client.post("/api/v1/graphs", json={"graph_id": "traj_empty_steps"})
+    resp = client.post("/api/v1/graphs/traj_empty_steps/memories", json={
+        "mode": "trajectory",
+        "goal": "finish task",
+        "initial_observation": "initial scene",
+        "steps": [],
+    })
+    assert resp.status_code == 422
+
+
 def test_insert_stamps_session_id_on_all_node_types(client):
     """An insert with session_id should stamp it on every newly-created node."""
     client.post("/api/v1/graphs", json={"graph_id": "sess_test"})

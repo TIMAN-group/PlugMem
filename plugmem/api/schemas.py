@@ -73,6 +73,7 @@ class MemoryInsertRequest(BaseModel):
 
     # trajectory mode
     goal: Optional[str] = None
+    initial_observation: Optional[str] = None
     steps: Optional[List[TrajectoryStep]] = None
 
     # structured mode
