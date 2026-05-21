@@ -190,6 +190,26 @@ default:
         os.unlink(path)
 
 
+def test_from_yaml_extra_body():
+    path = _write_yaml("""
+default:
+  base_url: "https://openrouter.ai/api/v1"
+  api_key: "key"
+  model: "openai/gpt-oss-120b:free"
+  extra_body:
+    reasoning:
+      enabled: true
+""")
+    try:
+        router = LLMRouter.from_yaml(path)
+
+        assert router.for_role("default")._extra_body() == {
+            "reasoning": {"enabled": True},
+        }
+    finally:
+        os.unlink(path)
+
+
 def test_from_yaml_empty_raises():
     path = _write_yaml("")
     try:

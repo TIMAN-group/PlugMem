@@ -53,6 +53,7 @@ class OpenAICompatibleLLMClient(LLMClient):
         presence_penalty: float = 0.0,
         top_k: Optional[int] = None,
         enable_thinking: Optional[bool] = None,
+        extra_body: Optional[Dict[str, Any]] = None,
     ):
         self.model = model
         self.max_retries = max_retries
@@ -64,6 +65,7 @@ class OpenAICompatibleLLMClient(LLMClient):
         self.presence_penalty = presence_penalty
         self.top_k = top_k
         self.enable_thinking = enable_thinking
+        self.extra_body = extra_body or {}
 
         if is_azure:
             self._client = AzureOpenAI(
@@ -108,7 +110,7 @@ class OpenAICompatibleLLMClient(LLMClient):
         return ""
 
     def _extra_body(self) -> Optional[Dict[str, Any]]:
-        extra_body: Dict[str, Any] = {}
+        extra_body: Dict[str, Any] = dict(self.extra_body)
         if self.top_k is not None:
             extra_body["top_k"] = self.top_k
         if self.enable_thinking is not None:

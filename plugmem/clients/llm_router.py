@@ -158,4 +158,5 @@ def _build_client(cfg: dict) -> OpenAICompatibleLLMClient:
         presence_penalty=float(cfg.get("presence_penalty", 0.0)),
         top_k=int(top_k) if top_k is not None else None,
         enable_thinking=cfg.get("enable_thinking"),
+        extra_body=cfg.get("extra_body"),
     )
