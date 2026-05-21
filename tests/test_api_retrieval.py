@@ -1,5 +1,15 @@
 """Tests for retrieve, reason, and consolidate endpoints."""
 
+from plugmem.inference.retrieving import get_mode
+
+
+class ModeLLM:
+    def __init__(self, response):
+        self.response = response
+
+    def complete(self, messages, **kwargs):
+        return self.response
+
 
 def _seed_graph(client, graph_id="ret_test"):
     """Create a graph and insert some semantic memories."""
@@ -36,6 +46,22 @@ def test_reason(client):
     assert data["mode"] == "semantic_memory"
     assert isinstance(data["reasoning"], str)
     assert len(data["reasoning"]) > 0
+
+
+def test_get_mode_normalizes_markdown_heading_response():
+    llm = ModeLLM("### Reasoning\nThis is a workflow.\n### Memory Type\n## procedural_memory")
+
+    mode = get_mode(llm, observation="click the checkout button", task_type="web navigation")
+
+    assert mode == "procedural_memory"
+
+
+def test_get_mode_defaults_to_semantic_for_unrecognized_response():
+    llm = ModeLLM("### Memory Type\n## unknown_memory")
+
+    mode = get_mode(llm, observation="What is the boiling point of water?", task_type="")
+
+    assert mode == "semantic_memory"
 
 
 def test_retrieve_not_found(client):
