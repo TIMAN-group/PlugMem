@@ -48,6 +48,24 @@ def test_reason(client):
     assert len(data["reasoning"]) > 0
 
 
+def test_recall_text_returns_plain_retrieved_memory(client):
+    _seed_graph(client, "recall_text_test")
+    resp = client.post("/api/v1/graphs/recall_text_test/recall_text", json={
+        "observation": "What temperature does water boil?",
+        "mode": "semantic_memory",
+        "session_id": "run-text",
+    })
+    assert resp.status_code == 200
+    assert resp.headers["content-type"].startswith("text/plain")
+    assert "Water boils at 100 degrees Celsius" in resp.text
+    assert "reasoning_prompt" not in resp.text
+
+    recalls = client.get("/api/v1/graphs/recall_text_test/recalls").json()["recalls"]
+    assert len(recalls) == 1
+    assert recalls[0]["endpoint"] == "recall_text"
+    assert recalls[0]["session_id"] == "run-text"
+
+
 def test_get_mode_normalizes_markdown_heading_response():
     llm = ModeLLM("### Reasoning\nThis is a workflow.\n### Memory Type\n## procedural_memory")
 

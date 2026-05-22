@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import PlainTextResponse
 
 from plugmem.api.auth import require_api_key
 from plugmem.api.dependencies import get_graph_manager
@@ -71,6 +72,14 @@ def _get_graph(graph_id: str):
         raise HTTPException(status_code=404, detail=f"Graph '{graph_id}' not found")
 
 
+def _memory_text_for_mode(variables: Dict[str, Any], mode: str) -> str:
+    if mode == "procedural_memory":
+        return variables.get("procedural_memory", "") or ""
+    if mode == "episodic_memory":
+        return variables.get("episodic_memory", "") or ""
+    return variables.get("semantic_memory", "") or ""
+
+
 @router.post("/{graph_id}/retrieve", response_model=RetrieveResponse)
 async def retrieve(graph_id: str, body: RetrieveRequest) -> RetrieveResponse:
     graph = _get_graph(graph_id)
@@ -119,6 +128,26 @@ async def reason(graph_id: str, body: ReasonRequest) -> ReasonResponse:
         reasoning=reasoning,
         reasoning_prompt=messages,
     )
+
+
+@router.post("/{graph_id}/recall_text", response_class=PlainTextResponse)
+async def recall_text(graph_id: str, body: RetrieveRequest) -> PlainTextResponse:
+    graph = _get_graph(graph_id)
+
+    audit: Dict[str, Any] = {}
+    messages, variables, mode = graph.retrieve_memory(
+        goal=body.goal,
+        subgoal=body.subgoal,
+        state=body.state,
+        observation=body.observation,
+        time=body.time,
+        task_type=body.task_type,
+        mode=body.mode,
+        _audit=audit,
+    )
+    _write_audit(graph, endpoint="recall_text", body=body, audit=audit, mode=mode, n_messages=len(messages))
+
+    return PlainTextResponse(_memory_text_for_mode(variables, mode))
 
 
 @router.post("/{graph_id}/consolidate", response_model=ConsolidateResponse)
