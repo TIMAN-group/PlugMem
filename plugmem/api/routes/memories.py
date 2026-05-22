@@ -29,16 +29,18 @@ async def insert_memories(graph_id: str, body: MemoryInsertRequest) -> MemoryIns
         raise HTTPException(status_code=404, detail=f"Graph '{graph_id}' not found")
 
     if body.mode == "trajectory":
-        return _insert_trajectory(graph, body)
+        return _insert_trajectory(graph, body, include_semantic=True)
+    if body.mode == "trajectory_no_semantic":
+        return _insert_trajectory(graph, body, include_semantic=False)
     else:
         return _insert_structured(graph, body)
 
 
-def _insert_trajectory(graph, body: MemoryInsertRequest) -> MemoryInsertResponse:
+def _insert_trajectory(graph, body: MemoryInsertRequest, *, include_semantic: bool) -> MemoryInsertResponse:
     if not body.goal:
-        raise HTTPException(status_code=422, detail="'goal' is required for trajectory mode")
+        raise HTTPException(status_code=422, detail=f"'goal' is required for {body.mode} mode")
     if not body.steps:
-        raise HTTPException(status_code=422, detail="'steps' is required for trajectory mode")
+        raise HTTPException(status_code=422, detail=f"'steps' is required for {body.mode} mode")
 
     llm = get_llm()
     embedder = get_embedder()
@@ -54,7 +56,7 @@ def _insert_trajectory(graph, body: MemoryInsertRequest) -> MemoryInsertResponse
     )
     for step in body.steps:
         mem.append(action_t0=step.action, observation_t1=step.observation)
-    mem.close()
+    mem.close(include_semantic=include_semantic)
     graph.insert(mem)
 
     stats = graph.storage.get_graph_stats(graph.graph_id)

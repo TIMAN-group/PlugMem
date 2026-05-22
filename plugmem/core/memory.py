@@ -101,7 +101,7 @@ class Memory:
         )
         self.observation_t0 = observation_t1
 
-    def close(self) -> None:
+    def close(self, include_semantic: bool = True) -> None:
         self.memory["episodic"].append(self.trajectory)
         self.trajectory = []
 
@@ -112,13 +112,14 @@ class Memory:
                     f"Step {i}:\n-State: {step['state']}\n"
                     f"-Action: {step['action']}\n-Reward: {step['reward']}\n"
                 )
-                new_semantic = get_semantic(self.llm, step, j, i, self.time)
-                self.memory["semantic"] += new_semantic
-                for semantic_memory in new_semantic:
-                    self.memory_embedding["semantic"].append({
-                        "semantic_memory": self.embedder.embed(semantic_memory["semantic_memory"]),
-                        "tags": [self.embedder.embed(tag) for tag in semantic_memory["tags"]],
-                    })
+                if include_semantic:
+                    new_semantic = get_semantic(self.llm, step, j, i, self.time)
+                    self.memory["semantic"] += new_semantic
+                    for semantic_memory in new_semantic:
+                        self.memory_embedding["semantic"].append({
+                            "semantic_memory": self.embedder.embed(semantic_memory["semantic_memory"]),
+                            "tags": [self.embedder.embed(tag) for tag in semantic_memory["tags"]],
+                        })
 
             procedural_memory, goal, _return = get_procedural(self.llm, trajectory=trajectory_str)
 

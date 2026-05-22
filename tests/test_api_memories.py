@@ -86,6 +86,26 @@ def test_insert_trajectory_with_initial_observation(client):
     assert nodes[1]["action"] == "click second"
 
 
+def test_insert_trajectory_no_semantic_builds_procedural_only(client):
+    client.post("/api/v1/graphs", json={"graph_id": "traj_no_sem"})
+    resp = client.post("/api/v1/graphs/traj_no_sem/memories", json={
+        "mode": "trajectory_no_semantic",
+        "goal": "finish task",
+        "initial_observation": "initial scene",
+        "steps": [
+            {"action": "click first", "observation": "after first click"},
+            {"action": "click second", "observation": "after second click"},
+        ],
+    })
+    assert resp.status_code == 200, resp.text
+    stats = resp.json()["stats"]
+    assert stats["episodic"] == 2
+    assert stats["procedural"] > 0
+    assert stats["subgoal"] > 0
+    assert stats["semantic"] == 0
+    assert stats["tag"] == 0
+
+
 def test_insert_trajectory_without_initial_observation_uses_first_step(client):
     client.post("/api/v1/graphs", json={"graph_id": "traj_legacy"})
     resp = client.post("/api/v1/graphs/traj_legacy/memories", json={
