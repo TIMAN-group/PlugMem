@@ -1418,7 +1418,7 @@ class MemoryGraph:
         
         if mode == "episodic_memory":
             
-            episodic_memory_str = self.retrieve_episodic_memory(
+            episodic_memory_str = self.retrieve_episodic_nodes(
                 observation=observation
             )
             
