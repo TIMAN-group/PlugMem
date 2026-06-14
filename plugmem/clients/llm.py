@@ -24,9 +24,9 @@ class LLMClient(ABC):
     def complete(
         self,
         messages: List[Dict[str, str]],
-        temperature: float = 0,
-        top_p: float = 1.0,
-        max_tokens: int = 4096,
+        temperature: Optional[float] = None,
+        top_p: Optional[float] = None,
+        max_tokens: Optional[int] = None,
     ) -> str:
         ...
 
@@ -47,11 +47,25 @@ class OpenAICompatibleLLMClient(LLMClient):
         is_azure: bool = False,
         azure_api_version: str = "2024-05-01-preview",
         token_usage_file: Optional[str] = None,
+        temperature: float = 0,
+        top_p: float = 1.0,
+        max_tokens: int = 4096,
+        presence_penalty: float = 0.0,
+        top_k: Optional[int] = None,
+        enable_thinking: Optional[bool] = None,
+        extra_body: Optional[Dict[str, Any]] = None,
     ):
         self.model = model
         self.max_retries = max_retries
         self.retry_delay = retry_delay
         self.token_usage_file = token_usage_file
+        self.temperature = temperature
+        self.top_p = top_p
+        self.max_tokens = max_tokens
+        self.presence_penalty = presence_penalty
+        self.top_k = top_k
+        self.enable_thinking = enable_thinking
+        self.extra_body = extra_body or {}
 
         if is_azure:
             self._client = AzureOpenAI(
@@ -65,19 +79,25 @@ class OpenAICompatibleLLMClient(LLMClient):
     def complete(
         self,
         messages: List[Dict[str, str]],
-        temperature: float = 0,
-        top_p: float = 1.0,
-        max_tokens: int = 4096,
+        temperature: Optional[float] = None,
+        top_p: Optional[float] = None,
+        max_tokens: Optional[int] = None,
     ) -> str:
+        kwargs = {
+            "model": self.model,
+            "messages": messages,
+            "temperature": self.temperature if temperature is None else temperature,
+            "top_p": self.top_p if top_p is None else top_p,
+            "max_tokens": self.max_tokens if max_tokens is None else max_tokens,
+            "presence_penalty": self.presence_penalty,
+        }
+        extra_body = self._extra_body()
+        if extra_body:
+            kwargs["extra_body"] = extra_body
+
         for attempt in range(1, self.max_retries + 1):
             try:
-                response = self._client.chat.completions.create(
-                    model=self.model,
-                    messages=messages,
-                    temperature=temperature,
-                    top_p=top_p,
-                    max_tokens=max_tokens,
-                )
+                response = self._client.chat.completions.create(**kwargs)
                 self._log_usage(response, messages)
                 content = response.choices[0].message.content
                 return content.strip() if content else ""
@@ -88,6 +108,16 @@ class OpenAICompatibleLLMClient(LLMClient):
                     time.sleep(self.retry_delay)
 
         return ""
+
+    def _extra_body(self) -> Optional[Dict[str, Any]]:
+        extra_body: Dict[str, Any] = dict(self.extra_body)
+        if self.top_k is not None:
+            extra_body["top_k"] = self.top_k
+        if self.enable_thinking is not None:
+            extra_body["chat_template_kwargs"] = {
+                "enable_thinking": self.enable_thinking,
+            }
+        return extra_body or None
 
     def _log_usage(self, response: Any, messages: List[Dict[str, str]]) -> None:
         if not self.token_usage_file:

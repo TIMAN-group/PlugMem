@@ -1,0 +1,10 @@
+default:
+  base_url: "https://api-inference.modelscope.cn/v1"
+  api_key: "${LLM_API_KEY}"
+  model: "Qwen/Qwen3.5-27B"
+  temperature: 0
+  top_p: 0.8
+  max_tokens: 32768
+  presence_penalty: 1.5
+  top_k: 20
+  enable_thinking: false

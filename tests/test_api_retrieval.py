@@ -1,5 +1,15 @@
 """Tests for retrieve, reason, and consolidate endpoints."""
 
+from plugmem.inference.retrieving import get_mode
+
+
+class ModeLLM:
+    def __init__(self, response):
+        self.response = response
+
+    def complete(self, messages, **kwargs):
+        return self.response
+
 
 def _seed_graph(client, graph_id="ret_test"):
     """Create a graph and insert some semantic memories."""
@@ -36,6 +46,40 @@ def test_reason(client):
     assert data["mode"] == "semantic_memory"
     assert isinstance(data["reasoning"], str)
     assert len(data["reasoning"]) > 0
+
+
+def test_recall_text_returns_plain_retrieved_memory(client):
+    _seed_graph(client, "recall_text_test")
+    resp = client.post("/api/v1/graphs/recall_text_test/recall_text", json={
+        "observation": "What temperature does water boil?",
+        "mode": "semantic_memory",
+        "session_id": "run-text",
+    })
+    assert resp.status_code == 200
+    assert resp.headers["content-type"].startswith("text/plain")
+    assert "Water boils at 100 degrees Celsius" in resp.text
+    assert "reasoning_prompt" not in resp.text
+
+    recalls = client.get("/api/v1/graphs/recall_text_test/recalls").json()["recalls"]
+    assert len(recalls) == 1
+    assert recalls[0]["endpoint"] == "recall_text"
+    assert recalls[0]["session_id"] == "run-text"
+
+
+def test_get_mode_normalizes_markdown_heading_response():
+    llm = ModeLLM("### Reasoning\nThis is a workflow.\n### Memory Type\n## procedural_memory")
+
+    mode = get_mode(llm, observation="click the checkout button", task_type="web navigation")
+
+    assert mode == "procedural_memory"
+
+
+def test_get_mode_defaults_to_semantic_for_unrecognized_response():
+    llm = ModeLLM("### Memory Type\n## unknown_memory")
+
+    mode = get_mode(llm, observation="What is the boiling point of water?", task_type="")
+
+    assert mode == "semantic_memory"
 
 
 def test_retrieve_not_found(client):

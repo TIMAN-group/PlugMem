@@ -75,9 +75,9 @@ class LLMRouter:
     def complete(
         self,
         messages: List[Dict[str, str]],
-        temperature: float = 0,
-        top_p: float = 1.0,
-        max_tokens: int = 4096,
+        temperature: Optional[float] = None,
+        top_p: Optional[float] = None,
+        max_tokens: Optional[int] = None,
     ) -> str:
         return self._clients["default"].complete(
             messages, temperature=temperature, top_p=top_p, max_tokens=max_tokens,
@@ -142,6 +142,7 @@ class LLMRouter:
 
 
 def _build_client(cfg: dict) -> OpenAICompatibleLLMClient:
+    top_k = cfg.get("top_k")
     return OpenAICompatibleLLMClient(
         base_url=cfg.get("base_url", ""),
         api_key=cfg.get("api_key", ""),
@@ -151,4 +152,11 @@ def _build_client(cfg: dict) -> OpenAICompatibleLLMClient:
         is_azure=bool(cfg.get("is_azure", False)),
         azure_api_version=cfg.get("azure_api_version", "2024-05-01-preview"),
         token_usage_file=cfg.get("token_usage_file"),
+        temperature=float(cfg.get("temperature", 0)),
+        top_p=float(cfg.get("top_p", 1.0)),
+        max_tokens=int(cfg.get("max_tokens", 4096)),
+        presence_penalty=float(cfg.get("presence_penalty", 0.0)),
+        top_k=int(top_k) if top_k is not None else None,
+        enable_thinking=cfg.get("enable_thinking"),
+        extra_body=cfg.get("extra_body"),
     )

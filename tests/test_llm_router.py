@@ -144,6 +144,72 @@ default:
         os.unlink(path)
 
 
+def test_from_yaml_llm_generation_options():
+    path = _write_yaml("""
+default:
+  base_url: "https://api-inference.modelscope.cn/v1"
+  api_key: "key"
+  model: "Qwen/Qwen3.5-27B"
+  temperature: 0
+  top_p: 0.8
+  max_tokens: 32768
+  presence_penalty: 1.5
+  top_k: 20
+  enable_thinking: false
+""")
+    try:
+        router = LLMRouter.from_yaml(path)
+        client = router.for_role("default")
+
+        assert client.temperature == 0
+        assert client.top_p == 0.8
+        assert client.max_tokens == 32768
+        assert client.presence_penalty == 1.5
+        assert client.top_k == 20
+        assert client.enable_thinking is False
+        assert client._extra_body() == {
+            "top_k": 20,
+            "chat_template_kwargs": {"enable_thinking": False},
+        }
+    finally:
+        os.unlink(path)
+
+
+def test_from_yaml_no_modelscope_extra_body_by_default():
+    path = _write_yaml("""
+default:
+  base_url: "http://localhost:8000/v1"
+  api_key: "key"
+  model: "default-model"
+""")
+    try:
+        router = LLMRouter.from_yaml(path)
+
+        assert router.for_role("default")._extra_body() is None
+    finally:
+        os.unlink(path)
+
+
+def test_from_yaml_extra_body():
+    path = _write_yaml("""
+default:
+  base_url: "https://openrouter.ai/api/v1"
+  api_key: "key"
+  model: "openai/gpt-oss-120b:free"
+  extra_body:
+    reasoning:
+      enabled: true
+""")
+    try:
+        router = LLMRouter.from_yaml(path)
+
+        assert router.for_role("default")._extra_body() == {
+            "reasoning": {"enabled": True},
+        }
+    finally:
+        os.unlink(path)
+
+
 def test_from_yaml_empty_raises():
     path = _write_yaml("")
     try:

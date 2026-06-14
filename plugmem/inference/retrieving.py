@@ -130,6 +130,26 @@ def get_new_subgoal(
     return response
 
 
+_ALLOWED_MEMORY_MODES = ("episodic_memory", "semantic_memory", "procedural_memory")
+
+
+def _normalize_memory_mode(response: str) -> str:
+    text = (response or "").strip()
+    pattern = r"###\s*Memory Type\s*\n(?P<mode>.*)"
+    match = re.search(pattern, text, re.I | re.S)
+    candidate = match.group("mode") if match else text
+
+    mode_match = re.search(
+        r"\b(episodic_memory|semantic_memory|procedural_memory)\b",
+        candidate,
+        re.I,
+    )
+    if not mode_match:
+        return "semantic_memory"
+    mode = mode_match.group(1).lower()
+    return mode if mode in _ALLOWED_MEMORY_MODES else "semantic_memory"
+
+
 def get_mode(
     llm: LLMClient, observation: str, task_type: str,
     *, prompts: Optional[PromptRegistry] = None, graph_id: Optional[str] = None,
@@ -137,6 +157,4 @@ def get_mode(
     prompt_obj = _resolve("get_mode", GetModePrompt, prompts, graph_id)
     variables = {"observation": observation, "task_type": task_type}
     response = llm.complete(messages=_render_messages(prompt_obj, variables))
-    pattern = r"### Memory Type\n(.*)"
-    match = re.search(pattern, response)
-    return match.group(1).strip() if match else "semantic_memory"
+    return _normalize_memory_mode(response)

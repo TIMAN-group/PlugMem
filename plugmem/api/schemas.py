@@ -60,8 +60,8 @@ class EpisodicStep(BaseModel):
 class MemoryInsertRequest(BaseModel):
     mode: str = Field(
         ...,
-        description='"trajectory" or "structured"',
-        pattern="^(trajectory|structured)$",
+        description='"trajectory", "trajectory_no_semantic", or "structured"',
+        pattern="^(trajectory|trajectory_no_semantic|structured)$",
     )
     session_id: Optional[str] = Field(
         None,
@@ -73,6 +73,7 @@ class MemoryInsertRequest(BaseModel):
 
     # trajectory mode
     goal: Optional[str] = None
+    initial_observation: Optional[str] = None
     steps: Optional[List[TrajectoryStep]] = None
 
     # structured mode
