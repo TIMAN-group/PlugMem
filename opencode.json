@@ -1,0 +1,19 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "instructions": ["AGENTS.md"],
+  "plugin": ["./plugmem-coding-opencode/dist/index.js"],
+  "provider": {
+    "local-qwen": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "Local Qwen via ngrok",
+      "options": {
+        "baseURL": "https://jizejtestblackwell00.ngrok.app/v1"
+      },
+      "models": {
+        "CalamitousFelicitousness/Qwen2.5-32B-Instruct-fp8-dynamic": {
+          "name": "Qwen Custom Model"
+        }
+      }
+    }
+  }
+}

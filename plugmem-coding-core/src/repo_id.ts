@@ -84,12 +84,13 @@ export async function deriveRepoGraphId(
   if (remote) {
     const ident = parseGitUrl(remote);
     if (ident) {
-      return `repo://${harness}/${ident.host}/${ident.owner}/${ident.repo}`;
+      return `repo_${harness}_${ident.host}_${ident.owner}_${ident.repo}`;
     }
   }
   // Fallback: identify by absolute path. Marker segment "local" so it
   // can never collide with a real host name.
-  return `repo://${harness}/local${cwd}`;
+  const safePath = cwd.replace(/[^a-zA-Z0-9._-]/g, "_");
+  return `repo_${harness}_local_${safePath}`;
 }
 
 /**

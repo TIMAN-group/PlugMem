@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from typing import Any, Dict, List, Optional
 
 import chromadb
@@ -17,8 +18,12 @@ logger = logging.getLogger(__name__)
 NODE_TYPES = ("semantic", "procedural", "tag", "subgoal", "episodic")
 
 
+def _safe_graph_id(graph_id: str) -> str:
+    return re.sub(r"[^a-zA-Z0-9._-]", "_", graph_id)
+
+
 def _collection_name(graph_id: str, node_type: str) -> str:
-    return f"{graph_id}_{node_type}"
+    return f"{_safe_graph_id(graph_id)}_{node_type}"
 
 
 def _to_list(v: Any) -> Optional[List[float]]:
@@ -88,7 +93,7 @@ class ChromaStorage:
             except Exception:
                 pass
         try:
-            self._client.delete_collection(f"{graph_id}_recall_audit")
+            self._client.delete_collection(f"{_safe_graph_id(graph_id)}_recall_audit")
         except Exception:
             pass
 
@@ -525,7 +530,7 @@ class ChromaStorage:
 
     def _recall_col(self, graph_id: str):
         return self._client.get_or_create_collection(
-            name=f"{graph_id}_recall_audit",
+            name=f"{_safe_graph_id(graph_id)}_recall_audit",
             metadata={"hnsw:space": "cosine"},
             embedding_function=self._embedding_fn,
         )
