@@ -1,7 +1,7 @@
 import sys
 import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from memory_structuring.structuring_inference import get_subgoal, get_reward, get_state, get_procedural, get_semantic
+from memory_structuring.structuring_inference import get_subgoal, get_reward, get_state, get_procedural, get_semantic, get_semantic_longmemeval
 from utils import call_gpt, call_qwen, get_embedding, get_similarity
 import re
 
@@ -96,3 +96,53 @@ class Memory:
             self.memory_embedding["procedural"].append({
                 "subgoal": get_embedding(goal)
             })
+
+class Memory_LongMemEval:
+    
+    def __init__(self, goal, observation, time: str = "", session_id: int = 0):
+
+        self.time = time
+        self.session_id = session_id
+        self.memory = {}
+        self.memory["goal"] = goal
+        self.memory["episodic"] = []
+        self.memory["procedural"] = []
+        self.memory["semantic"] = []
+        self.memory['time'] = time
+        self.memory['session_id'] = session_id
+        self.memory_embedding = {}
+        self.memory_embedding["procedural"] = []
+        self.memory_embedding["semantic"] = []
+
+        self.observation_t0 = observation
+        self.goal = goal
+        self.trajectory = []
+        self.step = {}
+        self.state_t0 = ""
+        #self.state_t0 = get_state("", "", "", observation)
+
+    def append(self, action_t0, observation_t1):
+        subgoal = ""
+        reward = ""
+        self.trajectory.append({
+            "subgoal": subgoal,
+            "state": self.state_t0,
+            "observation": self.observation_t0,
+            "action": action_t0,
+            "reward": reward,
+            "time": self.time
+        })
+        self.state_t0 = ""
+        self.observation_t0 = observation_t1
+    
+    def close(self):
+        
+        self.memory["episodic"].append(self.trajectory)
+        for j, trajectory in enumerate(self.memory["episodic"]):
+            for i, step in  enumerate(trajectory):
+                new_semantic = get_semantic_longmemeval(step, j, i, self.time)
+                self.memory["semantic"] += new_semantic
+                for semantic_memory in new_semantic:
+                    self.memory_embedding["semantic"].append({
+                        "semantic_memory": get_embedding(semantic_memory["semantic_memory"])}
+                    )

@@ -32,7 +32,7 @@ from webagents_step.prompts.webarena import step_fewshot_template_adapted, step_
 
 from AgentOccam.utils import EVALUATOR_DIR
 
-from memory_retrieving.memory_graph import MemoryGraph
+from plugmem_client import PlugMemClient as MemoryGraph
 from memory_retrieving.value_longmemeval import TagEqual, TagRelevant, SemanticEqual, SemanticRelevant, SubgoalEqual, SubgoalRelevant, ProceduralEqual, ProceduralRelevant
 from utils import save_episodic
 

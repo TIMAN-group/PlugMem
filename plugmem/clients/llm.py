@@ -107,6 +107,7 @@ class OpenAICompatibleLLMClient(LLMClient):
     ) -> str:
         for attempt in range(1, self.max_retries + 1):
             try:
+                start_time = time.perf_counter()
                 response = self._client.chat.completions.create(
                     model=self.model,
                     messages=messages,
@@ -114,7 +115,23 @@ class OpenAICompatibleLLMClient(LLMClient):
                     top_p=top_p,
                     max_tokens=max_tokens,
                 )
+                latency = time.perf_counter() - start_time
                 self._log_usage(response, messages)
+                
+                # Capture LLM call stats if request context is active
+                from plugmem.api.logging_ctx import current_log_ctx
+                ctx = current_log_ctx.get()
+                if ctx is not None:
+                    usage = getattr(response, "usage", None)
+                    p_tok = getattr(usage, "prompt_tokens", 0) if usage else 0
+                    c_tok = getattr(usage, "completion_tokens", 0) if usage else 0
+                    ctx.record_llm_call(
+                        model=self.model,
+                        prompt_tokens=p_tok,
+                        completion_tokens=c_tok,
+                        latency_sec=latency,
+                    )
+
                 content = response.choices[0].message.content
                 return content.strip() if content else ""
 

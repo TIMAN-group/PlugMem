@@ -103,6 +103,10 @@ class SemanticNode:
     def get_semantic_memory(self) -> str:
         return self.semantic_memory_str
 
+    @property
+    def credibility(self) -> int:
+        return self.Credibility
+
 
 class TagNode:
     """Stores a tag with embedding for categorizing semantic memories."""
@@ -175,6 +179,10 @@ class ProceduralNode:
 
     def get_procedural_memory(self) -> str:
         return self.procedural_memory_str
+
+    @property
+    def subgoal(self) -> str:
+        return self.subgoals[0] if self.subgoals else ""
 
 
 class SubgoalNode:

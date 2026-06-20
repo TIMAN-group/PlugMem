@@ -10,7 +10,7 @@ parent_dir = os.path.abspath(os.path.join(current_dir, "../.."))
 # 添加到 sys.path
 sys.path.append(parent_dir)
 from memory_structuring.memory import Memory
-from memory_retrieving.memory_graph import MemoryGraph
+from plugmem_client import PlugMemClient as MemoryGraph
 from memory_retrieving.value_longmemeval import TagEqual, TagRelevant, SemanticEqual, SemanticRelevant, SubgoalEqual, SubgoalRelevant, ProceduralEqual, ProceduralRelevant
 from utils import call_qwen, call_gpt, save_episodic_longmem_ver
 

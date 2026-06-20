@@ -123,6 +123,11 @@ async def reason(graph_id: str, body: ReasonRequest) -> ReasonResponse:
     
     _write_audit(graph, endpoint="reason", body=body, audit=audit, mode=mode, n_messages=len(messages))
 
+    from plugmem.api.logging_ctx import current_log_ctx
+    ctx = current_log_ctx.get()
+    if ctx is not None:
+        ctx.agent_output = reasoning
+
     return ReasonResponse(
         mode=mode,
         reasoning=reasoning,

@@ -6,7 +6,7 @@ from AgentOccam.AgentOccam import AgentOccam, PlanTreeNode, Actor
 from webagents_step.utils.data_prep import DotDict
 
 from memory_structuring.memory import Memory
-from memory_retrieving.memory_graph import MemoryGraph
+from plugmem_client import PlugMemClient as MemoryGraph
 from utils import call_gpt
 
 
@@ -231,7 +231,7 @@ class AgentOccamWithMemory(AgentOccam):
                     step_idx=self.get_step()
                 )
                 
-                retrieved_memory_str = call_gpt(messages=messages, model_id="gpt-4o")
+                retrieved_memory_str = call_gpt(messages=messages, model_id="CalamitousFelicitousness/Qwen2.5-32B-Instruct-fp8-dynamic")
                 self.actor.retrieved_memory = retrieved_memory_str
                 print(f"Sel Type: {sel_type}, Retrieved memory: {retrieved_memory_str}")
                 
