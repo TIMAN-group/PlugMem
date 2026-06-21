@@ -94,9 +94,14 @@ class OpenAICompatibleLLMClient(LLMClient):
                 azure_endpoint=base_url,
                 api_key=api_key,
                 api_version=azure_api_version,
+                default_headers={"ngrok-skip-browser-warning": "true"},
             )
         else:
-            self._client = OpenAI(base_url=base_url, api_key=api_key)
+            self._client = OpenAI(
+                base_url=base_url, 
+                api_key=api_key,
+                default_headers={"ngrok-skip-browser-warning": "true"},
+            )
 
     def complete(
         self,
