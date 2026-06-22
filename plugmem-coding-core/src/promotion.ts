@@ -18,7 +18,7 @@ import type {
 // Candidate / state shapes
 // ---------------------------------------------------------------------
 
-export type CandidateKind = "failure_delta" | "correction";
+export type CandidateKind = "failure_delta" | "correction" | "episodic";
 
 export interface Candidate {
   kind: CandidateKind;
@@ -64,6 +64,10 @@ const CORRECTION_PATTERNS: RegExp[] = [
   /\bwe\s+(?:use|prefer|don'?t use|don't use)\b/i,
   /\bthe right way\b/i,
   /\bshould\s+(?:be|use|not)\b/i,
+];
+
+const EPISODIC_PATTERNS: RegExp[] = [
+  /\b(it works|looks good|perfect|we are done|finished|success)\b/i,
 ];
 
 // ---------------------------------------------------------------------
@@ -141,12 +145,19 @@ export async function recordUserPrompt(
   state: SessionState,
   e: UserPromptEvent,
 ): Promise<void> {
-  if (!matchesCorrectionPattern(e.prompt)) return;
-  await appendCandidate(state, {
-    kind: "correction",
-    window: `User correction: ${e.prompt.slice(0, 1500)}`,
-    ts: Date.now(),
-  });
+  if (matchesCorrectionPattern(e.prompt)) {
+    await appendCandidate(state, {
+      kind: "correction",
+      window: `User correction: ${e.prompt.slice(0, 1500)}`,
+      ts: Date.now(),
+    });
+  } else if (EPISODIC_PATTERNS.some((re) => re.test(e.prompt))) {
+    await appendCandidate(state, {
+      kind: "episodic",
+      window: `Goal completed: ${e.prompt.slice(0, 1500)}`,
+      ts: Date.now(),
+    });
+  }
 }
 
 export function matchesCorrectionPattern(prompt: string): boolean {

@@ -123,7 +123,7 @@ export interface HealthResponse {
 
 // ── Promotion-gate extraction ───────────────────────────────────────
 
-export type CandidateKindWire = "failure_delta" | "correction";
+export type CandidateKindWire = "failure_delta" | "correction" | "episodic";
 
 export interface CandidateWire {
   kind: CandidateKindWire;

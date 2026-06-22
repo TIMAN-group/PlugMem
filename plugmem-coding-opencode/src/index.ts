@@ -51,9 +51,20 @@ export const PlugMemPlugin: Plugin = async (ctx: PluginContext): Promise<PluginH
          });
        } catch (err: any) { logDebug(`ERROR IN PRE TOOL: ${err.message}`); }
     },
-    'tool.execute.after': async ({ tool, sessionID, callID }: any, { args, result }: any) => {
+    'tool.execute.after': async ({ tool, sessionID, callID }: any, { args, result, error }: any) => {
        logDebug(`TOOL AFTER: ${tool} ${callID}`);
        try {
+         let outcome: "success" | "failure" | "unknown" = "success";
+         const resStr = typeof result === 'string' ? result : JSON.stringify(result);
+         
+         if (error) {
+            outcome = "failure";
+         } else if (result && typeof result === "object" && result.exitCode && result.exitCode !== 0) {
+            outcome = "failure";
+         } else if (resStr.includes("Command failed:") || resStr.includes("Error:")) {
+            outcome = "failure";
+         }
+
          await core.onPostTool({
             harness: "opencode",
             sessionId: sessionID || "default-session",
@@ -61,8 +72,8 @@ export const PlugMemPlugin: Plugin = async (ctx: PluginContext): Promise<PluginH
             toolName: tool,
             toolInput: typeof args === 'string' ? args : JSON.stringify(args),
             callId: callID || "",
-            toolResult: typeof result === 'string' ? result : JSON.stringify(result),
-            outcome: "success"
+            toolResult: error ? String(error) : resStr,
+            outcome
          });
        } catch (err: any) { logDebug(`ERROR IN POST TOOL: ${err.message}`); }
     },
