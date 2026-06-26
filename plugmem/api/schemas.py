@@ -133,8 +133,9 @@ class RetrieveRequest(BaseModel):
     mode: Optional[str] = Field(
         None,
         description=(
-            'null (auto-detect), "semantic_memory", '
-            '"episodic_memory", or "procedural_memory"'
+            'Optional override. Omit/null (default) and PlugMem selects the '
+            'memory type. Set explicitly only to force "semantic_memory", '
+            '"episodic_memory", or "procedural_memory".'
         ),
     )
     min_confidence: Optional[float] = Field(
@@ -176,7 +177,13 @@ class ReasonRequest(BaseModel):
     state: Optional[str] = None
     task_type: str = ""
     time: str = ""
-    mode: Optional[str] = None
+    mode: Optional[str] = Field(
+        None,
+        description=(
+            'Optional override. Omit/null (default) and PlugMem selects the '
+            'memory type. Set explicitly only to force a specific type.'
+        ),
+    )
     min_confidence: Optional[float] = Field(None, ge=0.0, le=1.0)
     source_in: Optional[List[MemorySource]] = None
     session_id: Optional[str] = Field(

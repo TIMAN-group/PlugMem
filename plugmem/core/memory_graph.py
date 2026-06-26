@@ -48,6 +48,27 @@ from plugmem.storage.chroma import ChromaStorage, _deserialize_list
 
 logger = logging.getLogger(__name__)
 
+# The memory types PlugMem can retrieve. Type selection is PlugMem's job
+# (via get_mode); a request may override it, but only with one of these.
+_VALID_MODES = ("semantic_memory", "episodic_memory", "procedural_memory")
+
+
+def _normalize_mode(mode: Any, default: str = "semantic_memory") -> str:
+    """Coerce a mode value to one of _VALID_MODES.
+
+    Strips stray markdown the planner LLM sometimes emits (``#``/``*``) and
+    validates the result. An unrecognized value falls back to ``default``
+    with a warning rather than silently degrading or raising deep in the
+    retrieval branches.
+    """
+    if not isinstance(mode, str):
+        return default
+    m = mode.replace("#", "").replace("*", "").strip()
+    if m not in _VALID_MODES:
+        logger.warning("Unrecognized retrieval mode %r; falling back to %s", mode, default)
+        return default
+    return m
+
 
 def _passes_metadata_filter(
     node,
@@ -984,24 +1005,22 @@ class MemoryGraph:
         import time as time_mod
         start_time = time_mod.perf_counter()
 
-        if mode is not None:
-            next_subgoal, query_tags = "", []
-            if isinstance(mode, str):
-                mode = mode.replace("#", "").replace("*", "").strip()
-        else:
-            next_subgoal, query_tags = get_plan(
-                self.retrieval_llm, goal=goal, subgoal=subgoal, state=state, observation=observation,
-                prompts=self.prompts, graph_id=self.graph_id,
-            )
-            logger.info("query_tags: %s", query_tags)
-
+        # PlugMem decides the memory type unless the caller explicitly
+        # overrides it. Type selection and planning are independent: the
+        # planner (tags + next subgoal) runs regardless of who chose the mode.
+        if mode is None:
             mode = get_mode(
                 self.retrieval_llm, observation=observation, task_type=task_type,
                 prompts=self.prompts, graph_id=self.graph_id,
             )
-            logger.info("mode: %s", mode)
-            if isinstance(mode, str):
-                mode = mode.replace("#", "").replace("*", "").strip()
+        mode = _normalize_mode(mode)
+        logger.info("mode: %s", mode)
+
+        next_subgoal, query_tags = get_plan(
+            self.retrieval_llm, goal=goal, subgoal=subgoal, state=state, observation=observation,
+            prompts=self.prompts, graph_id=self.graph_id,
+        )
+        logger.info("query_tags: %s", query_tags)
 
         _reasoning_map = {
             "episodic_memory": ("reasoning_episodic", DefaultEpisodicPrompt),
@@ -1132,6 +1151,7 @@ class MemoryGraph:
                 plan_source["mode"] = "default"
         else:
             plan_source["mode"] = "override"
+        mode = _normalize_mode(mode)
 
         if (query_tags is None or next_subgoal is None) and auto_plan:
             llm_subgoal, llm_tags = get_plan(

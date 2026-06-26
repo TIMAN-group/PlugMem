@@ -38,6 +38,30 @@ def test_reason(client):
     assert len(data["reasoning"]) > 0
 
 
+def test_retrieve_auto_detects_mode_when_omitted(client):
+    """With no mode in the request, PlugMem selects the memory type."""
+    _seed_graph(client, "auto_mode")
+    resp = client.post("/api/v1/graphs/auto_mode/retrieve", json={
+        "observation": "What temperature does water boil?",
+    })
+    assert resp.status_code == 200
+    # PlugMem chose the type; with the fake planner this resolves to semantic_memory.
+    assert resp.json()["mode"] in (
+        "semantic_memory", "episodic_memory", "procedural_memory",
+    )
+
+
+def test_retrieve_normalizes_decorated_override_mode(client):
+    """A decorated explicit mode is normalized instead of silently degrading."""
+    _seed_graph(client, "decorated_mode")
+    resp = client.post("/api/v1/graphs/decorated_mode/retrieve", json={
+        "observation": "boiling point",
+        "mode": "**semantic_memory**",
+    })
+    assert resp.status_code == 200
+    assert resp.json()["mode"] == "semantic_memory"
+
+
 def test_retrieve_not_found(client):
     resp = client.post("/api/v1/graphs/nonexistent/retrieve", json={
         "observation": "test",

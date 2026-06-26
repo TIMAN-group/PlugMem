@@ -139,7 +139,8 @@ class PlugMemClient:
             self.graph_id = os.environ.get("PLUGMEM_GRAPH_ID", "default")
         else:
             self.graph_id = graph_id
-        
+
+        tag_rel = kwargs.get("tag_relevant")
         if tag_rel is not None:
             self.tag_relevant = tag_rel
         else:

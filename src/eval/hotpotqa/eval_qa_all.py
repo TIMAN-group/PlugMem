@@ -145,7 +145,9 @@ def multi_hop_retrieval_sem(
             observation=query_text,
             time=0,
             task_type=task_type,
-            mode="semantic_memory",
+            # Let PlugMem decide the memory type. Multi-hop only makes sense
+            # for semantic results; the guard below returns directly otherwise.
+            mode=None,
         )
         memory_str = variables.get(sel_type, "")
         
@@ -482,10 +484,8 @@ def main():
                         observation=question,
                         time=0,
                         task_type=task_type,
-                        mode = sel_mem_type,
-                        # mode="semantic_memory",
-                        # mode="episodic_memory",
-                        # mode="procedural_memory",
+                        # Defaults to None (PlugMem decides); --sel_mem_type can force a type.
+                        mode=sel_mem_type,
                     )
                     retrieved_mem = variables.get(sel_type, variables.get(sel_type, ""))
 
