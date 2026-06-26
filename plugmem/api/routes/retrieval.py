@@ -16,6 +16,7 @@ from plugmem.api.schemas import (
     RetrieveRequest,
     RetrieveResponse,
 )
+from plugmem.clients.llm import with_phase
 from plugmem.graph_manager import GraphManager
 
 
@@ -91,18 +92,21 @@ def retrieve(graph_id: str, body: RetrieveRequest) -> RetrieveResponse:
         sthr = body.semantic_threshold if body.semantic_threshold is not None else 0.0
         semantic_relevant = SemanticRelevant(k=sk, value_threshold=sthr)
 
-    messages, variables, mode = graph.retrieve_memory(
-        goal=body.goal,
-        subgoal=body.subgoal,
-        state=body.state,
-        observation=body.observation,
-        time=body.time,
-        task_type=body.task_type,
-        mode=body.mode,
-        tag_relevant=tag_relevant,
-        semantic_relevant=semantic_relevant,
-        _audit=audit,
-    )
+    with with_phase("retrieve"):
+        messages, variables, mode = graph.retrieve_memory(
+            goal=body.goal,
+            subgoal=body.subgoal,
+            state=body.state,
+            observation=body.observation,
+            time=body.time,
+            task_type=body.task_type,
+            mode=body.mode,
+            min_confidence=body.min_confidence,
+            source_in=body.source_in,
+            tag_relevant=tag_relevant,
+            semantic_relevant=semantic_relevant,
+            _audit=audit,
+        )
     _write_audit(graph, endpoint="retrieve", body=body, audit=audit, mode=mode, n_messages=len(messages))
 
     return RetrieveResponse(
@@ -117,34 +121,25 @@ def reason(graph_id: str, body: ReasonRequest) -> ReasonResponse:
     graph = _get_graph(graph_id)
 
     audit: Dict[str, Any] = {}
-    tag_relevant = None
-    if body.tag_k is not None or body.tag_threshold is not None:
-        from plugmem.core.value_functions import TagRelevant
-        tk = body.tag_k if body.tag_k is not None else 1
-        tthr = body.tag_threshold if body.tag_threshold is not None else 0.8
-        tag_relevant = TagRelevant(k=tk, value_threshold=tthr)
+    with with_phase("retrieve"):
+        messages, variables, mode = graph.retrieve_memory(
+            goal=body.goal,
+            subgoal=body.subgoal,
+            state=body.state,
+            observation=body.observation,
+            time=body.time,
+            task_type=body.task_type,
+            mode=body.mode,
+            min_confidence=body.min_confidence,
+            source_in=body.source_in,
+            tag_relevant=tag_relevant,
+            semantic_relevant=semantic_relevant,
+            _audit=audit,
+        )
 
-    semantic_relevant = None
-    if body.semantic_k is not None or body.semantic_threshold is not None:
-        from plugmem.core.value_functions import SemanticRelevant
-        sk = body.semantic_k if body.semantic_k is not None else 5
-        sthr = body.semantic_threshold if body.semantic_threshold is not None else 0.0
-        semantic_relevant = SemanticRelevant(k=sk, value_threshold=sthr)
-
-    messages, variables, mode = graph.retrieve_memory(
-        goal=body.goal,
-        subgoal=body.subgoal,
-        state=body.state,
-        observation=body.observation,
-        time=body.time,
-        task_type=body.task_type,
-        mode=body.mode,
-        tag_relevant=tag_relevant,
-        semantic_relevant=semantic_relevant,
-        _audit=audit,
-    )
-
-    reasoning = graph.llm.complete(messages=messages)
+    with with_phase("reason"):
+        reasoning = graph.llm.complete(messages=messages)
+    
     _write_audit(graph, endpoint="reason", body=body, audit=audit, mode=mode, n_messages=len(messages))
 
     from plugmem.api.logging_ctx import current_log_ctx

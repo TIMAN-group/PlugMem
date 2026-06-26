@@ -81,6 +81,18 @@ mg.retrieve_and_reason(...)
   <img src="assets/plugmem_structuring.png" alt="PlugMem Structuring"/>
 </p>
 
+### Coding-agent integration
+PlugMem ships a Claude Code plugin that turns the service into a
+**self-writing CLAUDE.md** — the agent learns project conventions,
+debugging recipes, and personal preferences from your sessions and
+recalls them at the start of future sessions.
+
+- **Plugin:** [`plugmem-coding-claude-code/`](./plugmem-coding-claude-code/) — install with `claude --plugin-dir <path>`.
+- **Onboarding:** [ONBOARDING.md](./plugmem-coding-claude-code/ONBOARDING.md) walks from zero to a verified loop in ~15 min.
+- **Architecture:** [`design_docs/plugmem_for_coding.md`](./design_docs/plugmem_for_coding.md) for the cross-session-memory design, promotion gate, recall policy, and per-harness graph isolation.
+
+OpenCode and OpenClaw adapters are planned (see the design doc); only the Claude Code adapter ships today.
+
 ## Installation
 1. Install benchmarks in `src/` and follow their installation docs to set up the environment.
 2. Install/upgrade `openai==2.6.1`.
@@ -151,6 +163,27 @@ mkdir -p "$DIR_PATH/episodic_memory" \
    #Rebuild the memory graph from structuring result and run test
    python eval_hotpotqa_all.py
    ```
+
+## OpenClaw plugin
+
+In addition to being a research project, we also ship PlugMem as a
+plugin service so you can drop long-term memory into an existing
+OpenClaw agent without writing any of the storage or retrieval code
+yourself. The plugin:
+
+- exposes `plugmem.remember` and `plugmem.recall` tools to the agent;
+- auto-saves the session trajectory on `/reset` and before context
+  compaction, then runs PlugMem's structuring pipeline over it;
+- fans recall out across a default graph plus optional read-only shared
+  graphs (e.g. a `user-facts` graph reused across multiple agents).
+
+A built-in **Memory Inspector** (web UI at `http://localhost:8080/inspector/`)
+lets you browse what was remembered, debug recall scoring node-by-node,
+view the graph topology, and trace each session's inserts and recalls.
+
+End-to-end setup — service, plugin registration, verification, inspector
+walkthrough, and shared-graph patterns — lives in
+[openclaw-plugmem-plugin/ONBOARDING.md](openclaw-plugmem-plugin/ONBOARDING.md).
 
 ## Reproducibility
 - We release agent trajectories and memory graph artifacts for all three tasks.

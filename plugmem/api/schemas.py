@@ -1,9 +1,20 @@
 """Pydantic request/response models for the PlugMem API."""
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field
+
+# Why a memory was promoted into the graph. None = legacy / trajectory-derived
+# (no promotion gate ran). Used by the coding-agent adapter to filter what
+# surfaces on recall.
+MemorySource = Literal[
+    "failure_delta",
+    "correction",
+    "merged",
+    "repeated_lookup",
+    "explicit",
+]
 
 
 # ------------------------------------------------------------------ #
@@ -46,6 +57,8 @@ class SemanticMemoryInput(BaseModel):
         None,
         description="Pre-computed tag embedding vectors, one per tag.",
     )
+    source: Optional[MemorySource] = None
+    confidence: float = Field(0.5, ge=0.0, le=1.0)
 
 
 class ProceduralMemoryInput(BaseModel):
@@ -56,6 +69,8 @@ class ProceduralMemoryInput(BaseModel):
         None,
         description="Pre-computed subgoal embedding. If provided, the server skips re-embedding.",
     )
+    source: Optional[MemorySource] = None
+    confidence: float = Field(0.5, ge=0.0, le=1.0)
 
     model_config = {"populate_by_name": True}
 
@@ -116,6 +131,15 @@ class RetrieveRequest(BaseModel):
             '"episodic_memory", or "procedural_memory"'
         ),
     )
+    min_confidence: Optional[float] = Field(
+        None,
+        ge=0.0,
+        le=1.0,
+        description="Exclude memories with confidence below this threshold.",
+    )
+    source_in: Optional[List[MemorySource]] = Field(
+        None,
+        description="Restrict recall to memories whose source is in this list.",
     session_id: Optional[str] = Field(
         None,
         description="If set, the recall is logged against this session id.",
@@ -140,6 +164,8 @@ class ReasonRequest(BaseModel):
     task_type: str = ""
     time: str = ""
     mode: Optional[str] = None
+    min_confidence: Optional[float] = Field(None, ge=0.0, le=1.0)
+    source_in: Optional[List[MemorySource]] = None
     session_id: Optional[str] = Field(
         None,
         description="If set, the reasoning recall is logged against this session id.",
@@ -177,6 +203,33 @@ class ConsolidateResponse(BaseModel):
 
 
 # ------------------------------------------------------------------ #
+# Promotion-gate extraction
+# ------------------------------------------------------------------ #
+
+CandidateKind = Literal["failure_delta", "correction"]
+
+
+class CandidateInput(BaseModel):
+    kind: CandidateKind
+    window: str = Field(..., description="Text context for the candidate.")
+
+
+class ExtractRequest(BaseModel):
+    candidates: List[CandidateInput] = Field(default_factory=list)
+
+
+class ExtractedMemory(BaseModel):
+    type: Literal["semantic", "procedural"]
+    semantic_memory: Optional[str] = None
+    tags: List[str] = Field(default_factory=list)
+    subgoal: Optional[str] = None
+    procedural_memory: Optional[str] = None
+    source: MemorySource
+    confidence: float = Field(..., ge=0.0, le=1.0)
+
+
+class ExtractResponse(BaseModel):
+    memories: List[ExtractedMemory] = Field(default_factory=list)
 # ------------------------------------------------------------------ #
 # Stats / Nodes
 # ------------------------------------------------------------------ #

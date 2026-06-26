@@ -101,6 +101,8 @@ def _insert_structured(graph, body: MemoryInsertRequest) -> MemoryInsertResponse
             mem.memory["semantic"].append({
                 "semantic_memory": sem.semantic_memory,
                 "tags": sem.tags,
+                "source": sem.source,
+                "confidence": sem.confidence,
             })
             # Use pre-computed embeddings if provided, otherwise fall back to embedder
             sem_emb = sem.embedding if sem.embedding is not None else embedder.embed(sem.semantic_memory)
@@ -121,6 +123,8 @@ def _insert_structured(graph, body: MemoryInsertRequest) -> MemoryInsertResponse
                 "procedural_memory": proc.procedural_memory,
                 "time": graph.semantic_time,
                 "return": proc.return_value,
+                "source": proc.source,
+                "confidence": proc.confidence,
             })
             # Use pre-computed embedding if provided, otherwise fall back to embedder
             subgoal_emb = proc.subgoal_embedding if proc.subgoal_embedding is not None else embedder.embed(proc.subgoal)
