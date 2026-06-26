@@ -62,6 +62,59 @@ class DummySemanticNode:
         return self.text
 
 
+class DummyEpisodicNode:
+    def __init__(self, episodic_id: int, observation: str = "", action: str = "", time: Any = "", subgoal: str = "", state: str = "", reward: str = ""):
+        self.episodic_id = episodic_id
+        self.observation = observation
+        self.action = action
+        self.time = time
+        self.subgoal = subgoal
+        self.state = state
+        self.reward = reward
+
+    def get_episodic_memory(self, date: bool = True) -> str:
+        parts = []
+        if self.observation:
+            parts.append(self.observation)
+        if self.action:
+            parts.append(self.action)
+        if date and self.time:
+            parts.append(str(self.time))
+        return "\n".join(parts) if parts else ""
+
+    def get_date(self) -> str:
+        return str(self.time) if self.time else ""
+
+
+class DummyProceduralNode:
+    def __init__(self, procedural_id: int, text: str = "", time: int = 0, subgoal: str = ""):
+        self.procedural_id = procedural_id
+        self.procedural_memory_str = text
+        self.subgoal = subgoal
+        self.time = time
+
+    def get_procedural_memory(self) -> str:
+        return self.procedural_memory_str
+
+
+class DummyTagNode:
+    def __init__(self, tag_id: int, tag: str, importance: int = 1, time: int = 0):
+        self.tag_id = tag_id
+        self.tag = tag
+        self.importance = importance
+        self.time = time
+
+
+class DummySubgoalNode:
+    def __init__(self, subgoal_id: int, subgoal: str, time: int = 0):
+        self.subgoal_id = subgoal_id
+        self.subgoal = subgoal
+        self.time = time
+
+    def get_subgoal(self) -> str:
+        return self.subgoal
+
+
 class PlugMemClient:
     """
     HTTP wrapper around the PlugMem FastAPI server.
@@ -316,39 +369,77 @@ class PlugMemClient:
             return []
 
     @property
-    def episodic_nodes(self) -> List:
+    def episodic_nodes(self) -> List[DummyEpisodicNode]:
         try:
-            result = _get(f"/graphs/{self.graph_id}/stats")
-            count = result.get("episodic", 0)
-            return [None] * count
-        except Exception:
+            result = _get(f"/graphs/{self.graph_id}/nodes?node_type=episodic&limit=50000")
+            nodes = result.get("nodes", [])
+            return [
+                DummyEpisodicNode(
+                    episodic_id=n.get("episodic_id", 0),
+                    observation=n.get("observation", ""),
+                    action=n.get("action", ""),
+                    time=n.get("time", ""),
+                    subgoal=n.get("subgoal", ""),
+                    state=n.get("state", ""),
+                    reward=n.get("reward", ""),
+                )
+                for n in nodes
+            ]
+        except Exception as e:
+            logger.warning("Could not fetch episodic nodes from server: %s", e)
             return []
 
     @property
-    def procedural_nodes(self) -> List:
+    def procedural_nodes(self) -> List[DummyProceduralNode]:
         try:
-            result = _get(f"/graphs/{self.graph_id}/stats")
-            count = result.get("procedural", 0)
-            return [None] * count
-        except Exception:
+            result = _get(f"/graphs/{self.graph_id}/nodes?node_type=procedural&limit=50000")
+            nodes = result.get("nodes", [])
+            return [
+                DummyProceduralNode(
+                    procedural_id=n.get("procedural_id", 0),
+                    text=n.get("procedural_memory", ""),
+                    time=n.get("time", 0),
+                    subgoal=n.get("subgoal", ""),
+                )
+                for n in nodes
+            ]
+        except Exception as e:
+            logger.warning("Could not fetch procedural nodes from server: %s", e)
             return []
 
     @property
-    def tag_nodes(self) -> List:
+    def tag_nodes(self) -> List[DummyTagNode]:
         try:
-            result = _get(f"/graphs/{self.graph_id}/stats")
-            count = result.get("tag", 0)
-            return [None] * count
-        except Exception:
+            result = _get(f"/graphs/{self.graph_id}/nodes?node_type=tag&limit=50000")
+            nodes = result.get("nodes", [])
+            return [
+                DummyTagNode(
+                    tag_id=n.get("tag_id", 0),
+                    tag=n.get("tag", ""),
+                    importance=n.get("importance", 1),
+                    time=n.get("time", 0),
+                )
+                for n in nodes
+            ]
+        except Exception as e:
+            logger.warning("Could not fetch tag nodes from server: %s", e)
             return []
 
     @property
-    def subgoal_nodes(self) -> List:
+    def subgoal_nodes(self) -> List[DummySubgoalNode]:
         try:
-            result = _get(f"/graphs/{self.graph_id}/stats")
-            count = result.get("subgoal", 0)
-            return [None] * count
-        except Exception:
+            result = _get(f"/graphs/{self.graph_id}/nodes?node_type=subgoal&limit=50000")
+            nodes = result.get("nodes", [])
+            return [
+                DummySubgoalNode(
+                    subgoal_id=n.get("subgoal_id", 0),
+                    subgoal=n.get("subgoal", ""),
+                    time=n.get("time", 0),
+                )
+                for n in nodes
+            ]
+        except Exception as e:
+            logger.warning("Could not fetch subgoal nodes from server: %s", e)
             return []
 
     # ------------------------------------------------------------------
