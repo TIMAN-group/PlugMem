@@ -423,6 +423,26 @@ class PlugMemClient:
             logger.warning("Could not fetch subgoal nodes from server: %s", e)
             return []
 
+    @property
+    def semantic_id2node(self) -> Dict[int, DummySemanticNode]:
+        return {x.semantic_id: x for x in self.semantic_nodes}
+
+    @property
+    def episodic_id2node(self) -> Dict[int, DummyEpisodicNode]:
+        return {x.episodic_id: x for x in self.episodic_nodes}
+
+    @property
+    def procedural_id2node(self) -> Dict[int, DummyProceduralNode]:
+        return {x.procedural_id: x for x in self.procedural_nodes}
+
+    @property
+    def subgoal_id2node(self) -> Dict[int, DummySubgoalNode]:
+        return {x.subgoal_id: x for x in self.subgoal_nodes}
+
+    @property
+    def tag_id2node(self) -> Dict[int, DummyTagNode]:
+        return {x.tag_id: x for x in self.tag_nodes}
+
     # ------------------------------------------------------------------
     # Compatibility interface methods
     # ------------------------------------------------------------------
