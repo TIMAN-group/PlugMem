@@ -104,6 +104,25 @@ def test_retrieve_writes_audit_row(client):
     assert row["n_messages"] > 0
 
 
+def test_retrieve_audit_records_selected_ids(client):
+    """The recall audit captures the selected semantic ids from the trace
+    (regression: these were always empty after the retrieve_with_trace switch)."""
+    _seed_graph(client, "audit_selected")
+    resp = client.post("/api/v1/graphs/audit_selected/retrieve", json={
+        "observation": "boiling point of water",
+        "mode": "semantic_memory",
+        # Force matches under the fake embedder/planner.
+        "semantic_k": 5,
+        "semantic_threshold": -1.0,
+        "tag_threshold": -1.0,
+        "session_id": "run-sel",
+    })
+    assert resp.status_code == 200
+
+    row = client.get("/api/v1/graphs/audit_selected/recalls").json()["recalls"][0]
+    assert len(row["selected_semantic_ids"]) > 0
+
+
 def test_recalls_filter_by_session_id(client):
     _seed_graph(client, "audit_filter")
     # Two recalls: one with session, one without

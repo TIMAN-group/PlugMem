@@ -143,6 +143,32 @@ class ChromaStorage:
             embedding_function=self._embedding_fn,
         )
 
+    def _batch_embeddings_or_compute(
+        self, embeddings: List[Any], documents: List[str]
+    ) -> List[List[float]]:
+        """Resolve a batch's embeddings, computing any missing ones.
+
+        When a batch mixes nodes that carry a precomputed embedding with nodes
+        that don't, the missing vectors are computed from their document text
+        via the collection's embedding function — instead of padding with a
+        fixed-dimension zero vector, which corrupts similarity search and breaks
+        outright when the model's dimension isn't 4096.
+        """
+        missing_idx = [i for i, e in enumerate(embeddings) if e is None]
+        computed: Dict[int, List[float]] = {}
+        if missing_idx:
+            if self._embedding_fn is None:
+                raise ValueError(
+                    "Batch insert has nodes without embeddings and no embedding "
+                    "function is configured to compute them."
+                )
+            vectors = self._embedding_fn([documents[i] for i in missing_idx])
+            computed = {i: list(v) for i, v in zip(missing_idx, vectors)}
+        return [
+            _to_list(e) if e is not None else computed[i]
+            for i, e in enumerate(embeddings)
+        ]
+
     def _get_all_paginated(self, col, include: List[str], batch_size: int = 500) -> Dict[str, list]:
         """Fetch all items from a collection in pages to avoid SQLite variable limits."""
         offset = 0
@@ -242,7 +268,7 @@ class ChromaStorage:
             "metadatas": metadatas,
         }
         if has_embeddings:
-            kwargs["embeddings"] = [_to_list(e) if e is not None else [0.0]*4096 for e in embeddings]
+            kwargs["embeddings"] = self._batch_embeddings_or_compute(embeddings, documents)
         col.add(**kwargs)
 
     def get_episodic(self, graph_id: str, episodic_id: int) -> Optional[Dict]:
@@ -354,7 +380,7 @@ class ChromaStorage:
             "metadatas": metadatas,
         }
         if has_embeddings:
-            kwargs["embeddings"] = [_to_list(e) if e is not None else [0.0]*4096 for e in embeddings]
+            kwargs["embeddings"] = self._batch_embeddings_or_compute(embeddings, documents)
         col.add(**kwargs)
 
     def update_semantic(
@@ -465,7 +491,7 @@ class ChromaStorage:
             "metadatas": metadatas,
         }
         if has_embeddings:
-            kwargs["embeddings"] = [_to_list(e) if e is not None else [0.0]*4096 for e in embeddings]
+            kwargs["embeddings"] = self._batch_embeddings_or_compute(embeddings, documents)
         col.add(**kwargs)
 
     def update_tag(
@@ -567,7 +593,7 @@ class ChromaStorage:
             "metadatas": metadatas,
         }
         if has_embeddings:
-            kwargs["embeddings"] = [_to_list(e) if e is not None else [0.0]*4096 for e in embeddings]
+            kwargs["embeddings"] = self._batch_embeddings_or_compute(embeddings, documents)
         col.add(**kwargs)
 
     def update_subgoal(
@@ -694,7 +720,7 @@ class ChromaStorage:
             "metadatas": metadatas,
         }
         if has_embeddings:
-            kwargs["embeddings"] = [_to_list(e) if e is not None else [0.0]*4096 for e in embeddings]
+            kwargs["embeddings"] = self._batch_embeddings_or_compute(embeddings, documents)
         col.add(**kwargs)
 
     def update_procedural(

@@ -76,8 +76,8 @@ def get_process_memory_mb() -> float:
             return 0.0
 
 
-def get_directory_size_mb(path: str) -> float:
-    """Calculate the total size in MB occupied by files in a directory."""
+def _walk_directory_size_mb(path: str) -> float:
+    """Sum the size in MB of all files under *path* (one full os.walk)."""
     if not os.path.isdir(path):
         return 0.0
     total_size = 0
@@ -91,3 +91,19 @@ def get_directory_size_mb(path: str) -> float:
     except Exception:
         pass
     return float(total_size) / (1024 * 1024)
+
+
+# Cache the directory size so the middleware doesn't os.walk the whole DB on
+# every request — the footprint changes slowly relative to request volume.
+_dir_size_cache: Dict[str, tuple] = {}
+
+
+def get_directory_size_mb(path: str, ttl: float = 60.0) -> float:
+    """Cached directory size in MB; recomputes at most once per *ttl* seconds."""
+    now = time.monotonic()
+    cached = _dir_size_cache.get(path)
+    if cached is not None and (now - cached[1]) < ttl:
+        return cached[0]
+    size = _walk_directory_size_mb(path)
+    _dir_size_cache[path] = (size, now)
+    return size

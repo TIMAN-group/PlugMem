@@ -375,6 +375,22 @@ def _get_embedding_local(text: str, model_name: str = "all-MiniLM-L6-v2"):
     return emb.tolist()
 
 
+def _resolve_embedding_base_urls() -> List[str]:
+    """Self-hosted embedding endpoints from EMBEDDING_BASE_URL (comma-separated
+    for load balancing). Falls back to localhost dev defaults when unset."""
+    raw = os.environ.get("EMBEDDING_BASE_URL", "")
+    urls = [u.strip() for u in raw.split(",") if u.strip()]
+    if not urls:
+        urls = [
+            "http://localhost:8555/v1/embeddings",
+            "http://localhost:8556/v1/embeddings",
+        ]
+        logging.getLogger(__name__).warning(
+            "EMBEDDING_BASE_URL not set; using dev defaults %s", urls
+        )
+    return urls
+
+
 def get_embedding(text, embedding_model=None):
     """Embed `text`. Tries three backends in order, returning the first
     success; raises RuntimeError if all are exhausted.
@@ -390,32 +406,23 @@ def get_embedding(text, embedding_model=None):
     errors: List[str] = []
     per_backend_tries = 3
 
-    # 1. Load-balanced self-hosted servers
-    base_urls = [
-        "http://localhost:8555/v1/embeddings",
-        "http://localhost:8556/v1/embeddings"
-    ]
-    
-    # Simple round-robin based on a random choice to distribute load across workers
-    import random
-    target_url = random.choice(base_urls)
-    
+    # 1. Load-balanced self-hosted servers (EMBEDDING_BASE_URL, comma-separated)
+    base_urls = _resolve_embedding_base_urls()
     model_id = embedding_model or "nvidia/NV-Embed-v2"
     for attempt in range(1, per_backend_tries + 1):
+        target_url = base_urls[(attempt - 1) % len(base_urls)]
         try:
             resp = requests.post(
                 target_url,
                 json={"model": model_id, "input": text},
                 headers={"Content-Type": "application/json"},
-                timeout=120, # increased timeout
+                timeout=120,
             )
             resp.raise_for_status()
             return resp.json()["data"][0]["embedding"]
         except Exception as e:
             errors.append(f"self-hosted ({target_url}) attempt {attempt}: {repr(e)}")
             time.sleep(2)
-            # Try the other URL on retry
-            target_url = base_urls[0] if target_url == base_urls[1] else base_urls[1]
 
     # 2. third-party OpenAI-compatible API
     api_url = os.environ.get("EMBEDDING_API_BASE_URL")
@@ -464,26 +471,26 @@ def get_embeddings_batch(texts: List[str], embedding_model=None) -> List[List[fl
     errors: List[str] = []
     per_backend_tries = 3
 
-    # 1. self-hosted server (supports array input natively)
-    base_url = os.environ.get("EMBEDDING_BASE_URL")
-    if base_url:
-        model_id = embedding_model or "nvidia/NV-Embed-v2"
-        for attempt in range(1, per_backend_tries + 1):
-            try:
-                resp = requests.post(
-                    base_url,
-                    json={"model": model_id, "input": cleaned},
-                    headers={"Content-Type": "application/json"},
-                    timeout=120,
-                )
-                resp.raise_for_status()
-                data = resp.json()["data"]
-                # Sort by index to guarantee order matches input
-                data.sort(key=lambda d: d["index"])
-                return [d["embedding"] for d in data]
-            except Exception as e:
-                errors.append(f"self-hosted batch attempt {attempt}: {repr(e)}")
-                time.sleep(2)
+    # 1. self-hosted server (supports array input natively; EMBEDDING_BASE_URL)
+    base_urls = _resolve_embedding_base_urls()
+    model_id = embedding_model or "nvidia/NV-Embed-v2"
+    for attempt in range(1, per_backend_tries + 1):
+        target_url = base_urls[(attempt - 1) % len(base_urls)]
+        try:
+            resp = requests.post(
+                target_url,
+                json={"model": model_id, "input": cleaned},
+                headers={"Content-Type": "application/json"},
+                timeout=120,
+            )
+            resp.raise_for_status()
+            data = resp.json()["data"]
+            # Sort by index to guarantee order matches input
+            data.sort(key=lambda d: d["index"])
+            return [d["embedding"] for d in data]
+        except Exception as e:
+            errors.append(f"self-hosted batch attempt {attempt}: {repr(e)}")
+            time.sleep(2)
 
     # 2. third-party OpenAI-compatible API
     api_url = os.environ.get("EMBEDDING_API_BASE_URL")

@@ -4,12 +4,31 @@ from __future__ import annotations
 import os
 import shutil
 import tempfile
+from plugmem.api import logging_ctx
 from plugmem.api.logging_ctx import (
     RequestContextLog,
     current_log_ctx,
     get_process_memory_mb,
     get_directory_size_mb,
 )
+
+
+def test_get_directory_size_mb_is_cached(monkeypatch):
+    """The expensive os.walk runs at most once per TTL window per path."""
+    calls = {"n": 0}
+
+    def fake_walk_size(path):
+        calls["n"] += 1
+        return 1.5
+
+    monkeypatch.setattr(logging_ctx, "_walk_directory_size_mb", fake_walk_size)
+    logging_ctx._dir_size_cache.clear()
+
+    first = logging_ctx.get_directory_size_mb("/some/db/path")
+    second = logging_ctx.get_directory_size_mb("/some/db/path")
+
+    assert first == second == 1.5
+    assert calls["n"] == 1  # second call served from cache, no re-walk
 
 
 def test_request_context_log():

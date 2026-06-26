@@ -92,9 +92,10 @@ class HTTPEmbeddingClient(EmbeddingClient):
         data = {"model": self.model, "input": cleaned}
 
         for attempt in range(1, self.max_retries + 1):
+            target_url = next(self._url_cycle)
             try:
                 response = requests.post(
-                    self.base_url, json=data, headers=headers, timeout=self.timeout * 2,
+                    target_url, json=data, headers=headers, timeout=self.timeout * 2,
                 )
                 response.raise_for_status()
                 result = response.json()["data"]

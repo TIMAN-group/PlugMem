@@ -47,6 +47,11 @@ class GraphManager:
         if graph_id is None:
             graph_id = uuid.uuid4().hex[:12]
 
+        # Already loaded in this process — creating is a cheap no-op. Avoids a
+        # full graph.load() on every PlugMemClient that re-ensures the graph.
+        if graph_id in self._graphs:
+            return graph_id
+
         exists = self._storage.graph_exists(graph_id)
         self._storage.create_graph(graph_id)
         graph = MemoryGraph(

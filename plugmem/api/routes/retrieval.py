@@ -38,25 +38,37 @@ def _write_audit(
         with api_lock:
             graph.storage.add_recall(
                 graph.graph_id,
-            endpoint=endpoint,
-            ts=_now_iso(),
-            graph_time=graph.semantic_time,
-            session_id=getattr(body, "session_id", None),
-            observation=body.observation or "",
-            goal=body.goal or "",
-            subgoal=body.subgoal or "",
-            state=body.state or "",
-            task_type=body.task_type or "",
-            mode=mode,
-            next_subgoal=audit.get("next_subgoal", ""),
-            query_tags=audit.get("query_tags", []),
-            selected_semantic_ids=audit.get("selected_semantic_ids", []),
-            selected_procedural_ids=audit.get("selected_procedural_ids", []),
-            n_messages=n_messages,
-        )
+                endpoint=endpoint,
+                ts=_now_iso(),
+                graph_time=graph.semantic_time,
+                session_id=getattr(body, "session_id", None),
+                observation=body.observation or "",
+                goal=body.goal or "",
+                subgoal=body.subgoal or "",
+                state=body.state or "",
+                task_type=body.task_type or "",
+                mode=mode,
+                next_subgoal=audit.get("next_subgoal", ""),
+                query_tags=audit.get("query_tags", []),
+                selected_semantic_ids=audit.get("selected_semantic_ids", []),
+                selected_procedural_ids=audit.get("selected_procedural_ids", []),
+                n_messages=n_messages,
+            )
     except Exception:
         # Don't let an audit-log failure break a working recall.
         pass
+
+
+def _audit_from_trace(result: Dict[str, Any]) -> Dict[str, Any]:
+    """Lift the recall-audit fields out of a retrieve_with_trace() result."""
+    plan = result.get("plan", {}) or {}
+    selected = result.get("selected", {}) or {}
+    return {
+        "next_subgoal": plan.get("next_subgoal", ""),
+        "query_tags": plan.get("query_tags", []),
+        "selected_semantic_ids": selected.get("semantic_ids", []),
+        "selected_procedural_ids": selected.get("procedural_ids", []),
+    }
 
 router = APIRouter(prefix="/graphs", tags=["retrieval"], dependencies=[Depends(require_api_key)])
 
@@ -115,8 +127,7 @@ def _parse_value_funcs(body: Union[RetrieveRequest, ReasonRequest]):
 @router.post("/{graph_id}/retrieve", response_model=RetrieveResponse)
 def retrieve(graph_id: str, body: RetrieveRequest) -> RetrieveResponse:
     graph = _get_graph(graph_id)
-    audit: Dict[str, Any] = {}
-    
+
     tag_rel, sem_rel, proc_rel, sub_rel, ep_rel = _parse_value_funcs(body)
 
     with with_phase("retrieve"):
@@ -137,11 +148,12 @@ def retrieve(graph_id: str, body: RetrieveRequest) -> RetrieveResponse:
             semantic_relevant4episodic=ep_rel,
             auto_plan=True,
         )
-        
+
     messages = result.get("rendered_prompt", [])
     variables = result.get("variables", {})
     mode = result.get("mode", "semantic_memory")
-    
+    audit = _audit_from_trace(result)
+
     _write_audit(graph, endpoint="retrieve", body=body, audit=audit, mode=mode, n_messages=len(messages))
 
     return RetrieveResponse(
@@ -154,7 +166,6 @@ def retrieve(graph_id: str, body: RetrieveRequest) -> RetrieveResponse:
 @router.post("/{graph_id}/reason", response_model=ReasonResponse)
 def reason(graph_id: str, body: ReasonRequest) -> ReasonResponse:
     graph = _get_graph(graph_id)
-    audit: Dict[str, Any] = {}
 
     tag_rel, sem_rel, proc_rel, sub_rel, ep_rel = _parse_value_funcs(body)
 
@@ -176,13 +187,14 @@ def reason(graph_id: str, body: ReasonRequest) -> ReasonResponse:
             semantic_relevant4episodic=ep_rel,
             auto_plan=True,
         )
-        
+
     messages = result.get("rendered_prompt", [])
     mode = result.get("mode", "semantic_memory")
+    audit = _audit_from_trace(result)
 
     with with_phase("reason"):
         reasoning = graph.llm.complete(messages=messages)
-    
+
     _write_audit(graph, endpoint="reason", body=body, audit=audit, mode=mode, n_messages=len(messages))
 
     from plugmem.api.logging_ctx import current_log_ctx
