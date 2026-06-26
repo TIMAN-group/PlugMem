@@ -107,6 +107,12 @@ class MemoryInsertRequest(BaseModel):
     semantic: Optional[List[SemanticMemoryInput]] = None
     procedural: Optional[List[ProceduralMemoryInput]] = None
 
+    tag_equal_threshold: Optional[float] = None
+    semantic_equal_threshold: Optional[float] = None
+    procedural_equal_threshold: Optional[float] = None
+    subgoal_equal_threshold: Optional[float] = None
+
+
 
 class MemoryInsertResponse(BaseModel):
     status: str = "ok"
@@ -140,6 +146,7 @@ class RetrieveRequest(BaseModel):
     source_in: Optional[List[MemorySource]] = Field(
         None,
         description="Restrict recall to memories whose source is in this list.",
+    )
     session_id: Optional[str] = Field(
         None,
         description="If set, the recall is logged against this session id.",
@@ -148,6 +155,12 @@ class RetrieveRequest(BaseModel):
     tag_threshold: Optional[float] = None
     semantic_k: Optional[int] = None
     semantic_threshold: Optional[float] = None
+    subgoal_k: Optional[int] = None
+    subgoal_threshold: Optional[float] = None
+    procedural_k: Optional[int] = None
+    procedural_threshold: Optional[float] = None
+    episodic_k: Optional[int] = None
+    episodic_threshold: Optional[float] = None
 
 
 class RetrieveResponse(BaseModel):
@@ -174,6 +187,12 @@ class ReasonRequest(BaseModel):
     tag_threshold: Optional[float] = None
     semantic_k: Optional[int] = None
     semantic_threshold: Optional[float] = None
+    subgoal_k: Optional[int] = None
+    subgoal_threshold: Optional[float] = None
+    procedural_k: Optional[int] = None
+    procedural_threshold: Optional[float] = None
+    episodic_k: Optional[int] = None
+    episodic_threshold: Optional[float] = None
 
 
 class ReasonResponse(BaseModel):

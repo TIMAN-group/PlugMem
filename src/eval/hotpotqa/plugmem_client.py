@@ -38,6 +38,15 @@ def _post(path: str, body: Dict, timeout: Optional[int] = 1200) -> Dict:
         raise RuntimeError(f"PlugMemClient POST {path} failed: {e}") from e
 
 
+
+def _delete(path: str, timeout: int = 300) -> None:
+    url = f"{_BASE_URL}/api/v1{path}"
+    try:
+        r = requests.delete(url, headers=_headers(), timeout=timeout)
+        r.raise_for_status()
+    except Exception as e:
+        raise RuntimeError(f"PlugMemClient DELETE {path} failed: {e}") from e
+
 def _get(path: str) -> Dict:
     url = f"{_BASE_URL}/api/v1{path}"
     try:
@@ -131,7 +140,6 @@ class PlugMemClient:
         else:
             self.graph_id = graph_id
         
-        tag_rel = kwargs.get("tag_relevant")
         if tag_rel is not None:
             self.tag_relevant = tag_rel
         else:
@@ -142,6 +150,22 @@ class PlugMemClient:
             self.semantic_relevant = sem_rel
         else:
             self.semantic_relevant = DummyRelevant(kwargs.get("semantic_relevant_k", 5))
+
+        # Add missing Original Contract attributes
+        self.tag_equal = kwargs.get("tag_equal", None)
+        self.semantic_equal = kwargs.get("semantic_equal", None)
+        self.semantic_relevant4episodic = kwargs.get("semantic_relevant4episodic", None)
+        self.subgoal_equal = kwargs.get("subgoal_equal", None)
+        self.subgoal_relevant = kwargs.get("subgoal_relevant", None)
+        self.procedural_equal = kwargs.get("procedural_equal", None)
+        self.procedural_relevant = kwargs.get("procedural_relevant", None)
+        
+        self.semantic_time = kwargs.get("semantic_time", 0)
+        self.procedural_time = kwargs.get("procedural_time", 0)
+        
+        self.log_file = log_file
+        self.logger = logging.getLogger("plugmem_client")
+        self.session_ids = []
 
         if log_file:
             try:
@@ -172,6 +196,16 @@ class PlugMemClient:
     # ------------------------------------------------------------------
     # Insert
     # ------------------------------------------------------------------
+
+
+    def clear(self) -> None:
+        """Wipe the server-side graph state."""
+        try:
+            _delete(f"/graphs/{self.graph_id}")
+        except Exception as e:
+            logger.warning("Could not clear graph %s: %s", self.graph_id, e)
+        # Re-ensure graph exists
+        self._ensure_graph()
 
     def insert(self, mem) -> None:
         """
@@ -270,6 +304,15 @@ class PlugMemClient:
                     "session_id": session_id,
                 }
 
+            if hasattr(self.tag_equal, "value_threshold"):
+                body["tag_equal_threshold"] = getattr(self.tag_equal, "value_threshold")
+            if hasattr(self.semantic_equal, "value_threshold"):
+                body["semantic_equal_threshold"] = getattr(self.semantic_equal, "value_threshold")
+            if hasattr(self.procedural_equal, "value_threshold"):
+                body["procedural_equal_threshold"] = getattr(self.procedural_equal, "value_threshold")
+            if hasattr(self.subgoal_equal, "value_threshold"):
+                body["subgoal_equal_threshold"] = getattr(self.subgoal_equal, "value_threshold")
+            
             _post(f"/graphs/{self.graph_id}/memories", body)
             logger.info("Inserted memory into graph '%s'", self.graph_id)
 
@@ -316,6 +359,19 @@ class PlugMemClient:
             body["semantic_k"] = getattr(self.semantic_relevant, "k")
         if hasattr(self.semantic_relevant, "value_threshold"):
             body["semantic_threshold"] = getattr(self.semantic_relevant, "value_threshold")
+        if hasattr(self.procedural_relevant, "k"):
+            body["procedural_k"] = getattr(self.procedural_relevant, "k")
+        if hasattr(self.procedural_relevant, "value_threshold"):
+            body["procedural_threshold"] = getattr(self.procedural_relevant, "value_threshold")
+        if hasattr(self.subgoal_relevant, "k"):
+            body["subgoal_k"] = getattr(self.subgoal_relevant, "k")
+        if hasattr(self.subgoal_relevant, "value_threshold"):
+            body["subgoal_threshold"] = getattr(self.subgoal_relevant, "value_threshold")
+        if hasattr(self, "semantic_relevant4episodic") and hasattr(self.semantic_relevant4episodic, "k"):
+            body["episodic_k"] = getattr(self.semantic_relevant4episodic, "k")
+        if hasattr(self, "semantic_relevant4episodic") and hasattr(self.semantic_relevant4episodic, "value_threshold"):
+            body["episodic_threshold"] = getattr(self.semantic_relevant4episodic, "value_threshold")
+
         result = _post(f"/graphs/{self.graph_id}/retrieve", body)
         messages  = result.get("reasoning_prompt", [])
         variables = result.get("variables", {})
@@ -325,6 +381,54 @@ class PlugMemClient:
     # ------------------------------------------------------------------
     # Consolidate / update
     # ------------------------------------------------------------------
+
+    def retrieve_and_reason(
+        self,
+        goal: str = "",
+        subgoal: str = "",
+        state: str = "",
+        observation: str = "",
+        time: Optional[int] = None,
+        task_type: str = "",
+        mode: Optional[str] = None,
+        min_confidence: float = 0.0,
+        source_in: Optional[List[str]] = None,
+        **kwargs,
+    ) -> str:
+        body = {
+            "goal": goal or "",
+            "subgoal": subgoal or "",
+            "state": state or "",
+            "observation": observation or "none",
+            "time": str(time) if time is not None else "",
+            "task_type": task_type or "",
+            "mode": mode,
+            "min_confidence": min_confidence,
+            "source_in": source_in,
+        }
+        if hasattr(self.tag_relevant, "k"):
+            body["tag_k"] = getattr(self.tag_relevant, "k")
+        if hasattr(self.tag_relevant, "value_threshold"):
+            body["tag_threshold"] = getattr(self.tag_relevant, "value_threshold")
+        if hasattr(self.semantic_relevant, "k"):
+            body["semantic_k"] = getattr(self.semantic_relevant, "k")
+        if hasattr(self.semantic_relevant, "value_threshold"):
+            body["semantic_threshold"] = getattr(self.semantic_relevant, "value_threshold")
+        if hasattr(self.procedural_relevant, "k"):
+            body["procedural_k"] = getattr(self.procedural_relevant, "k")
+        if hasattr(self.procedural_relevant, "value_threshold"):
+            body["procedural_threshold"] = getattr(self.procedural_relevant, "value_threshold")
+        if hasattr(self.subgoal_relevant, "k"):
+            body["subgoal_k"] = getattr(self.subgoal_relevant, "k")
+        if hasattr(self.subgoal_relevant, "value_threshold"):
+            body["subgoal_threshold"] = getattr(self.subgoal_relevant, "value_threshold")
+        if hasattr(self, "semantic_relevant4episodic") and hasattr(self.semantic_relevant4episodic, "k"):
+            body["episodic_k"] = getattr(self.semantic_relevant4episodic, "k")
+        if hasattr(self, "semantic_relevant4episodic") and hasattr(self.semantic_relevant4episodic, "value_threshold"):
+            body["episodic_threshold"] = getattr(self.semantic_relevant4episodic, "value_threshold")
+
+        result = _post(f"/graphs/{self.graph_id}/reason", body)
+        return result.get("reasoning", "")
 
     def update_semantic_subgraph(self, **kwargs) -> Dict:
         """Trigger consolidation on the server."""
@@ -461,6 +565,14 @@ class PlugMemClient:
     @property
     def tag_id2node(self) -> Dict[int, DummyTagNode]:
         return {x.tag_id: x for x in self.tag_nodes}
+
+    @property
+    def tag2node(self) -> Dict[str, DummyTagNode]:
+        return {x.tag: x for x in self.tag_nodes}
+
+    @property
+    def subgoal2node(self) -> Dict[str, DummySubgoalNode]:
+        return {x.subgoal: x for x in self.subgoal_nodes}
 
     # ------------------------------------------------------------------
     # Compatibility interface methods

@@ -790,6 +790,8 @@ class MemoryGraph:
         semantic_memory: dict,
         semantic_memory_embedding=None,
         value_func: ValueBase = None,
+        min_confidence: Optional[float] = None,
+        source_in: Optional[List[str]] = None,
     ) -> List[SemanticNode]:
         if semantic_memory_embedding is None:
             semantic_memory_embedding = {
@@ -799,6 +801,8 @@ class MemoryGraph:
         embedding = semantic_memory_embedding["semantic_memory"]
         values = []
         for sem_node in self.semantic_nodes:
+            if not _passes_metadata_filter(sem_node, min_confidence, source_in):
+                continue
             relevance = get_similarity(embedding, sem_node.embedding)
             recency = (self.semantic_time - sem_node.time) if isinstance(sem_node.time, int) else 0
             value = value_func.evaluate(
@@ -819,10 +823,18 @@ class MemoryGraph:
                 result.append(node)
         return result
 
-    def retrieve_episodic_nodes(self, observation: str) -> str:
+    def retrieve_episodic_nodes(
+        self, 
+        observation: str,
+        value_func: Optional[ValueBase] = None,
+        min_confidence: Optional[float] = None,
+        source_in: Optional[List[str]] = None,
+    ) -> str:
         semantic_nodes = self.retrieve_semantic_nodes_wo_tag(
             semantic_memory={"semantic_memory": observation},
-            value_func=self.semantic_relevant4episodic,
+            value_func=value_func if value_func is not None else self.semantic_relevant4episodic,
+            min_confidence=min_confidence,
+            source_in=source_in,
         )
         semantic_nodes = semantic_nodes[:30]
 
@@ -963,6 +975,8 @@ class MemoryGraph:
         mode: str = None,
         tag_relevant: Optional[ValueBase] = None,
         semantic_relevant: Optional[ValueBase] = None,
+        procedural_relevant: Optional[ValueBase] = None,
+        subgoal_relevant: Optional[ValueBase] = None,
         min_confidence: Optional[float] = None,
         source_in: Optional[List[str]] = None,
         _audit: Optional[Dict[str, Any]] = None,
@@ -1012,8 +1026,8 @@ class MemoryGraph:
         if mode in ["procedural_memory", "episodic_memory"]:
             procedural_nodes = self.retrieve_procedural_nodes(
                 subgoal=next_subgoal,
-                value_func_subgoal=self.subgoal_relevant,
-                value_func=self.procedural_relevant,
+                value_func_subgoal=subgoal_relevant if subgoal_relevant is not None else self.subgoal_relevant,
+                value_func=procedural_relevant if procedural_relevant is not None else self.procedural_relevant,
                 min_confidence=min_confidence,
                 source_in=source_in,
             )
@@ -1023,7 +1037,11 @@ class MemoryGraph:
         episodic_memory_str = ""
 
         if mode == "episodic_memory":
-            episodic_memory_str = self.retrieve_episodic_nodes(observation=observation)
+            episodic_memory_str = self.retrieve_episodic_nodes(
+                observation=observation,
+                min_confidence=min_confidence,
+                source_in=source_in,
+            )
         elif mode == "semantic_memory":
             if not semantic_nodes:
                 semantic_memory_str = "No relevant fact"
@@ -1082,6 +1100,13 @@ class MemoryGraph:
         query_tags: Optional[List[str]] = None,
         next_subgoal: Optional[str] = None,
         auto_plan: bool = False,
+        min_confidence: Optional[float] = None,
+        source_in: Optional[List[str]] = None,
+        tag_relevant: Optional[ValueBase] = None,
+        semantic_relevant: Optional[ValueBase] = None,
+        procedural_relevant: Optional[ValueBase] = None,
+        subgoal_relevant: Optional[ValueBase] = None,
+        semantic_relevant4episodic: Optional[ValueBase] = None,
     ) -> Dict[str, Any]:
         """Run the retrieval pipeline with full instrumentation.
 
@@ -1141,15 +1166,19 @@ class MemoryGraph:
         if mode in ("semantic_memory", "episodic_memory"):
             semantic_nodes = self.retrieve_semantic_nodes(
                 semantic_memory={"semantic_memory": observation, "tags": query_tags},
-                value_func_tag=self.tag_relevant,
-                value_func=self.semantic_relevant,
+                value_func_tag=tag_relevant if tag_relevant is not None else self.tag_relevant,
+                value_func=semantic_relevant if semantic_relevant is not None else self.semantic_relevant,
+                min_confidence=min_confidence,
+                source_in=source_in,
                 _trace=sem_trace,
             )
         if mode in ("procedural_memory", "episodic_memory"):
             procedural_nodes = self.retrieve_procedural_nodes(
                 subgoal=next_subgoal,
-                value_func_subgoal=self.subgoal_relevant,
-                value_func=self.procedural_relevant,
+                value_func_subgoal=subgoal_relevant if subgoal_relevant is not None else self.subgoal_relevant,
+                value_func=procedural_relevant if procedural_relevant is not None else self.procedural_relevant,
+                min_confidence=min_confidence,
+                source_in=source_in,
                 _trace=proc_trace,
             )
 
@@ -1159,7 +1188,12 @@ class MemoryGraph:
         episodic_memory_str = ""
 
         if mode == "episodic_memory":
-            episodic_memory_str = self.retrieve_episodic_nodes(observation=observation)
+            episodic_memory_str = self.retrieve_episodic_nodes(
+                observation=observation,
+                value_func=semantic_relevant4episodic,
+                min_confidence=min_confidence,
+                source_in=source_in,
+            )
         elif mode == "semantic_memory":
             if not semantic_nodes:
                 semantic_memory_str = "No relevant fact"
@@ -1214,6 +1248,7 @@ class MemoryGraph:
                 "procedural_ids": [n.procedural_id for n in procedural_nodes],
             },
             "rendered_prompt": rendered_prompt,
+            "variables": variables,
         }
 
     def retrieve_and_reason(

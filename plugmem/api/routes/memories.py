@@ -132,6 +132,16 @@ def _insert_structured(graph, body: MemoryInsertRequest) -> MemoryInsertResponse
                 "subgoal": subgoal_emb,
             })
 
+    # Apply insertion duplicate-detection thresholds if provided
+    if body.tag_equal_threshold is not None:
+        graph.tag_equal.value_threshold = body.tag_equal_threshold
+    if body.semantic_equal_threshold is not None:
+        graph.semantic_equal.value_threshold = body.semantic_equal_threshold
+    if body.procedural_equal_threshold is not None:
+        graph.procedural_equal.value_threshold = body.procedural_equal_threshold
+    if body.subgoal_equal_threshold is not None:
+        graph.subgoal_equal.value_threshold = body.subgoal_equal_threshold
+
     graph.insert(mem)
 
     stats = graph.storage.get_graph_stats(graph.graph_id)

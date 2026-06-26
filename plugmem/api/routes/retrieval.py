@@ -73,11 +73,7 @@ def _get_graph(graph_id: str):
         raise HTTPException(status_code=404, detail=f"Graph '{graph_id}' not found")
 
 
-@router.post("/{graph_id}/retrieve", response_model=RetrieveResponse)
-def retrieve(graph_id: str, body: RetrieveRequest) -> RetrieveResponse:
-    graph = _get_graph(graph_id)
-
-    audit: Dict[str, Any] = {}
+def _parse_value_funcs(body: Union[RetrieveRequest, ReasonRequest]):
     tag_relevant = None
     if body.tag_k is not None or body.tag_threshold is not None:
         from plugmem.core.value_functions import TagRelevant
@@ -92,8 +88,39 @@ def retrieve(graph_id: str, body: RetrieveRequest) -> RetrieveResponse:
         sthr = body.semantic_threshold if body.semantic_threshold is not None else 0.0
         semantic_relevant = SemanticRelevant(k=sk, value_threshold=sthr)
 
+    procedural_relevant = None
+    if body.procedural_k is not None or body.procedural_threshold is not None:
+        from plugmem.core.value_functions import ProceduralRelevant
+        pk = body.procedural_k if body.procedural_k is not None else 5
+        pthr = body.procedural_threshold if body.procedural_threshold is not None else 0.0
+        procedural_relevant = ProceduralRelevant(k=pk, value_threshold=pthr)
+
+    subgoal_relevant = None
+    if body.subgoal_k is not None or body.subgoal_threshold is not None:
+        from plugmem.core.value_functions import SubgoalRelevant
+        sgk = body.subgoal_k if body.subgoal_k is not None else 5
+        sgthr = body.subgoal_threshold if body.subgoal_threshold is not None else 0.0
+        subgoal_relevant = SubgoalRelevant(k=sgk, value_threshold=sgthr)
+        
+    semantic_relevant4episodic = None
+    if body.episodic_k is not None or body.episodic_threshold is not None:
+        from plugmem.core.value_functions import SemanticRelevant
+        ek = body.episodic_k if body.episodic_k is not None else 5
+        ethr = body.episodic_threshold if body.episodic_threshold is not None else 0.0
+        semantic_relevant4episodic = SemanticRelevant(k=ek, value_threshold=ethr)
+
+    return tag_relevant, semantic_relevant, procedural_relevant, subgoal_relevant, semantic_relevant4episodic
+
+
+@router.post("/{graph_id}/retrieve", response_model=RetrieveResponse)
+def retrieve(graph_id: str, body: RetrieveRequest) -> RetrieveResponse:
+    graph = _get_graph(graph_id)
+    audit: Dict[str, Any] = {}
+    
+    tag_rel, sem_rel, proc_rel, sub_rel, ep_rel = _parse_value_funcs(body)
+
     with with_phase("retrieve"):
-        messages, variables, mode = graph.retrieve_memory(
+        result = graph.retrieve_with_trace(
             goal=body.goal,
             subgoal=body.subgoal,
             state=body.state,
@@ -103,10 +130,18 @@ def retrieve(graph_id: str, body: RetrieveRequest) -> RetrieveResponse:
             mode=body.mode,
             min_confidence=body.min_confidence,
             source_in=body.source_in,
-            tag_relevant=tag_relevant,
-            semantic_relevant=semantic_relevant,
-            _audit=audit,
+            tag_relevant=tag_rel,
+            semantic_relevant=sem_rel,
+            procedural_relevant=proc_rel,
+            subgoal_relevant=sub_rel,
+            semantic_relevant4episodic=ep_rel,
+            auto_plan=True,
         )
+        
+    messages = result.get("rendered_prompt", [])
+    variables = result.get("variables", {})
+    mode = result.get("mode", "semantic_memory")
+    
     _write_audit(graph, endpoint="retrieve", body=body, audit=audit, mode=mode, n_messages=len(messages))
 
     return RetrieveResponse(
@@ -119,10 +154,12 @@ def retrieve(graph_id: str, body: RetrieveRequest) -> RetrieveResponse:
 @router.post("/{graph_id}/reason", response_model=ReasonResponse)
 def reason(graph_id: str, body: ReasonRequest) -> ReasonResponse:
     graph = _get_graph(graph_id)
-
     audit: Dict[str, Any] = {}
+
+    tag_rel, sem_rel, proc_rel, sub_rel, ep_rel = _parse_value_funcs(body)
+
     with with_phase("retrieve"):
-        messages, variables, mode = graph.retrieve_memory(
+        result = graph.retrieve_with_trace(
             goal=body.goal,
             subgoal=body.subgoal,
             state=body.state,
@@ -132,10 +169,16 @@ def reason(graph_id: str, body: ReasonRequest) -> ReasonResponse:
             mode=body.mode,
             min_confidence=body.min_confidence,
             source_in=body.source_in,
-            tag_relevant=tag_relevant,
-            semantic_relevant=semantic_relevant,
-            _audit=audit,
+            tag_relevant=tag_rel,
+            semantic_relevant=sem_rel,
+            procedural_relevant=proc_rel,
+            subgoal_relevant=sub_rel,
+            semantic_relevant4episodic=ep_rel,
+            auto_plan=True,
         )
+        
+    messages = result.get("rendered_prompt", [])
+    mode = result.get("mode", "semantic_memory")
 
     with with_phase("reason"):
         reasoning = graph.llm.complete(messages=messages)
