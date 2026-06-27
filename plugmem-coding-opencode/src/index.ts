@@ -17,8 +17,22 @@ function logDebug(msg: string) {
   fs.appendFileSync("plugin-debug.log", `[${new Date().toISOString()}] ${msg}\n`);
 }
 
-function getSessionId(event: any): string {
-  return event.properties?.info?.id || event.properties?.sessionID || "default-session";
+export function getSessionId(event: any): string {
+  // Session id lives in a different place per event family (OpenCode SDK):
+  //   message.part.updated -> properties.part.sessionID
+  //   message.updated      -> properties.info.sessionID  (Message.sessionID)
+  //   session.*            -> properties.info.id          (Session.id)
+  // Checking only info.id/sessionID (the old behavior) made user-prompt events
+  // fall back to "default-session", so correction/episodic candidates were
+  // bucketed away from the session the promotion gate drains — and silently lost.
+  const p = event?.properties ?? {};
+  return (
+    p.part?.sessionID ||
+    p.info?.sessionID ||
+    p.info?.id ||
+    p.sessionID ||
+    "default-session"
+  );
 }
 
 export const PlugMemPlugin: Plugin = async (ctx: PluginContext): Promise<PluginHooks> => {
