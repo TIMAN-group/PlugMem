@@ -6,6 +6,7 @@ and provides a ChromaDB EmbeddingFunction adapter.
 from __future__ import annotations
 
 import hashlib
+import itertools
 import logging
 import os
 import time
@@ -49,6 +50,7 @@ class HTTPEmbeddingClient(EmbeddingClient):
         timeout: int = 60,
     ):
         self.base_url = base_url
+        self._url_cycle = itertools.cycle([url.strip() for url in base_url.split(",") if url.strip()])
         self.model = model
         self.api_key = api_key
         self.max_text_len = max_text_len
@@ -65,8 +67,9 @@ class HTTPEmbeddingClient(EmbeddingClient):
 
         for attempt in range(1, self.max_retries + 1):
             try:
+                target_url = next(self._url_cycle)
                 response = requests.post(
-                    self.base_url, json=data, headers=headers, timeout=self.timeout,
+                    target_url, json=data, headers=headers, timeout=self.timeout,
                 )
                 response.raise_for_status()
                 result = response.json()
@@ -79,7 +82,32 @@ class HTTPEmbeddingClient(EmbeddingClient):
         raise RuntimeError(f"Failed to get embedding after {self.max_retries} attempts")
 
     def embed_batch(self, texts: List[str]) -> List[List[float]]:
-        return [self.embed(t) for t in texts]
+        """Embed multiple texts in a single HTTP request for GPU batch parallelism."""
+        if not texts:
+            return []
+        cleaned = [t[: self.max_text_len] for t in texts]
+        headers = {"Content-Type": "application/json"}
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+        data = {"model": self.model, "input": cleaned}
+
+        for attempt in range(1, self.max_retries + 1):
+            target_url = next(self._url_cycle)
+            try:
+                response = requests.post(
+                    target_url, json=data, headers=headers, timeout=self.timeout * 2,
+                )
+                response.raise_for_status()
+                result = response.json()["data"]
+                # Sort by index to guarantee order matches input
+                result.sort(key=lambda d: d["index"])
+                return [d["embedding"] for d in result]
+            except Exception as e:
+                logger.warning("[Attempt %d/%d] Batch embedding error: %s", attempt, self.max_retries, e)
+                if attempt < self.max_retries:
+                    time.sleep(self.retry_delay)
+
+        raise RuntimeError(f"Failed to get batch embeddings after {self.max_retries} attempts")
 
 
 class LocalDeterministicEmbeddingClient(EmbeddingClient):

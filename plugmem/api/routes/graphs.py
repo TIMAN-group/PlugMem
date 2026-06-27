@@ -22,7 +22,7 @@ def _manager() -> GraphManager:
 
 
 @router.post("", response_model=GraphResponse, status_code=status.HTTP_201_CREATED)
-async def create_graph(body: GraphCreateRequest) -> GraphResponse:
+def create_graph(body: GraphCreateRequest) -> GraphResponse:
     gm = _manager()
     try:
         graph_id = gm.create_graph(graph_id=body.graph_id)
@@ -33,13 +33,13 @@ async def create_graph(body: GraphCreateRequest) -> GraphResponse:
 
 
 @router.get("", response_model=GraphListResponse)
-async def list_graphs() -> GraphListResponse:
+def list_graphs() -> GraphListResponse:
     gm = _manager()
     return GraphListResponse(graphs=gm.list_graphs())
 
 
 @router.get("/{graph_id}", response_model=GraphResponse)
-async def get_graph(graph_id: str) -> GraphResponse:
+def get_graph(graph_id: str) -> GraphResponse:
     gm = _manager()
     try:
         gm.get_graph(graph_id)
@@ -50,7 +50,7 @@ async def get_graph(graph_id: str) -> GraphResponse:
 
 
 @router.delete("/{graph_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_graph(graph_id: str) -> None:
+def delete_graph(graph_id: str) -> None:
     gm = _manager()
     try:
         gm.delete_graph(graph_id)
@@ -59,7 +59,7 @@ async def delete_graph(graph_id: str) -> None:
 
 
 @router.get("/{graph_id}/stats", response_model=StatsResponse)
-async def get_stats(graph_id: str) -> StatsResponse:
+def get_stats(graph_id: str) -> StatsResponse:
     gm = _manager()
     try:
         stats = gm.get_stats(graph_id)
@@ -69,7 +69,7 @@ async def get_stats(graph_id: str) -> StatsResponse:
 
 
 @router.get("/{graph_id}/nodes", response_model=NodeListResponse)
-async def browse_nodes(
+def browse_nodes(
     graph_id: str,
     node_type: str = "semantic",
     limit: int = 50,

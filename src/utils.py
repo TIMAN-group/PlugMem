@@ -15,7 +15,7 @@ from typing import List, Dict, Any, Tuple, Set, Optional
 MAX_TRY=5
 MAX_EMBEDDING_INPUT_CHARS = 8192   # truncate text passed to any embedding backend
 DEFAULT_EMBEDDING_MODEL_NAME = "NV-Embed-v2"
-DEFAULT_LLM_NAME = "qwen-2.5-32b-instruct"
+DEFAULT_LLM_NAME = os.environ.get("LLM_MODEL", "qwen-2.5-32b-instruct")
 DEFAULT_LLM_NAME_ALIAS = ["qwen-2.5-32b-instruct",
                     "qwen2.5-32b-instruct",
                     "Qwen2.5-7B-Instruct",
@@ -88,6 +88,39 @@ def set_logger(
 # ----------------------------
 # LLM API
 # ----------------------------
+import threading
+import itertools
+
+_llm_clients = []
+_client_lock = threading.Lock()
+_client_cycle = None
+
+def get_llm_client():
+    global _llm_clients, _client_cycle
+    with _client_lock:
+        if not _llm_clients:
+            azure_endpoints_str = os.environ.get("AZURE_ENDPOINTS", os.environ.get("AZURE_ENDPOINT", ""))
+            base_urls_str = os.environ.get("OPENAI_BASE_URLS", os.environ.get("OPENAI_BASE_URL", ""))
+            api_keys_str = os.environ.get("OPENAI_API_KEYS", os.environ.get("OPENAI_API_KEY", ""))
+            
+            if azure_endpoints_str:
+                endpoints = [e.strip() for e in azure_endpoints_str.split(",") if e.strip()]
+                keys = [k.strip() for k in api_keys_str.split(",") if k.strip()] if api_keys_str else ["EMPTY"] * len(endpoints)
+                for i, ep in enumerate(endpoints):
+                    key = keys[i] if i < len(keys) else keys[-1] if keys else "EMPTY"
+                    _llm_clients.append(AzureOpenAI(azure_endpoint=ep, api_key=key, api_version="2024-12-01-preview"))
+            else:
+                urls = [u.strip() for u in base_urls_str.split(",") if u.strip()]
+                keys = [k.strip() for k in api_keys_str.split(",") if k.strip()] if api_keys_str else ["EMPTY"] * len(urls)
+                if not urls:
+                    _llm_clients.append(OpenAI())
+                else:
+                    for i, u in enumerate(urls):
+                        key = keys[i] if i < len(keys) else keys[-1] if keys else "EMPTY"
+                        _llm_clients.append(OpenAI(base_url=u, api_key=key))
+            _client_cycle = itertools.cycle(_llm_clients)
+        return next(_client_cycle)
+
 def wrapper_call_model(
     model_name: str = None,
     messages: List[Dict[str, str]] = None,
@@ -100,12 +133,8 @@ def wrapper_call_model(
 ) -> str:
     """Unified LLM caller. Two routes, picked from env:
 
-      1. Azure OpenAI — when AZURE_ENDPOINT is set. Uses OPENAI_API_KEY for
-         auth and AZURE_ENDPOINT for the base url.
-      2. OpenAI-compatible API — otherwise. The OpenAI SDK natively reads
-         OPENAI_BASE_URL and OPENAI_API_KEY from env, so any OpenAI-
-         compatible provider (vanilla OpenAI, OpenRouter, vLLM, etc.) works
-         by pointing OPENAI_BASE_URL at it.
+      1. Azure OpenAI — when AZURE_ENDPOINT/AZURE_ENDPOINTS is set. 
+      2. OpenAI-compatible API — otherwise. (OPENAI_BASE_URL/OPENAI_BASE_URLS)
 
     The model id is passed through verbatim — caller picks it via
     `model_name`, env var `LLM_NAME`, or falls back to `DEFAULT_LLM_NAME`.
@@ -123,21 +152,10 @@ def wrapper_call_model(
             {"role": "user", "content": prompt or ""},
         ]
 
-    azure_endpoint = os.environ.get("AZURE_ENDPOINT", None)
-    api_key = os.environ.get("OPENAI_API_KEY", None)
-    if azure_endpoint:
-        client = AzureOpenAI(
-            azure_endpoint=azure_endpoint,
-            api_key=api_key,
-            api_version="2024-12-01-preview",
-        )
-    else:
-        # OpenAI() picks up OPENAI_BASE_URL + OPENAI_API_KEY from env.
-        client = OpenAI()
-
     last_err = None
     for attempt in range(1, MAX_TRY + 1):
         try:
+            client = get_llm_client()
             response = client.chat.completions.create(
                 model=model_name,
                 messages=messages,
@@ -329,18 +347,48 @@ def call_gpt(prompt=None, messages=None, model_id="gpt-4o", temperature=0, top_p
             print(e); time.sleep(10); num_attempts += 1
 
 
-# ----------------------------
-# Embedding Model API
-# ----------------------------
-def _get_embedding_local(text: str, model_name: str = "nvidia/NV-Embed-v2"):
-    """Compute a local deterministic embedding using SHA-256 hash.
-    Requires no Hugging Face model download or local model loading, avoiding
-    loading massive models like NV-Embed-v2 into RAM.
-    """
-    import hashlib
-    dim = 32
-    h = hashlib.sha256((text or "").encode("utf-8")).digest()
-    return [((h[i % len(h)] - 128) / 128.0) for i in range(dim)]
+_LOCAL_EMBEDDING_MODEL = None  # cached SentenceTransformer instance
+
+
+def _get_embedding_local(text: str, model_name: str = "all-MiniLM-L6-v2"):
+    """Compute an embedding by loading the model locally via
+    sentence-transformers. The model is loaded on first use and cached for
+    subsequent calls. Requires `sentence-transformers` to be installed and
+    the model weights to be reachable (HF cache or downloadable)."""
+    global _LOCAL_EMBEDDING_MODEL
+    if _LOCAL_EMBEDDING_MODEL is None:
+        try:
+            from sentence_transformers import SentenceTransformer
+        except ImportError as e:
+            raise RuntimeError(
+                "Local embedding requires `sentence-transformers`. "
+                "Install with: pip install sentence-transformers"
+            ) from e
+        _LOCAL_EMBEDDING_MODEL = SentenceTransformer(
+            model_name, trust_remote_code=True
+        )
+    emb = _LOCAL_EMBEDDING_MODEL.encode(
+        text[:MAX_EMBEDDING_INPUT_CHARS],
+        convert_to_numpy=True,
+        normalize_embeddings=False,
+    )
+    return emb.tolist()
+
+
+def _resolve_embedding_base_urls() -> List[str]:
+    """Self-hosted embedding endpoints from EMBEDDING_BASE_URL (comma-separated
+    for load balancing). Falls back to localhost dev defaults when unset."""
+    raw = os.environ.get("EMBEDDING_BASE_URL", "")
+    urls = [u.strip() for u in raw.split(",") if u.strip()]
+    if not urls:
+        urls = [
+            "http://localhost:8555/v1/embeddings",
+            "http://localhost:8556/v1/embeddings",
+        ]
+        logging.getLogger(__name__).warning(
+            "EMBEDDING_BASE_URL not set; using dev defaults %s", urls
+        )
+    return urls
 
 
 def get_embedding(text, embedding_model=None):
@@ -358,23 +406,23 @@ def get_embedding(text, embedding_model=None):
     errors: List[str] = []
     per_backend_tries = 3
 
-    # 1. self-hosted server
-    base_url = os.environ.get("EMBEDDING_BASE_URL")
-    if base_url:
-        model_id = embedding_model or "nvidia/NV-Embed-v2"
-        for attempt in range(1, per_backend_tries + 1):
-            try:
-                resp = requests.post(
-                    base_url,
-                    json={"model": model_id, "input": text},
-                    headers={"Content-Type": "application/json"},
-                    timeout=60,
-                )
-                resp.raise_for_status()
-                return resp.json()["data"][0]["embedding"]
-            except Exception as e:
-                errors.append(f"self-hosted attempt {attempt}: {repr(e)}")
-                time.sleep(2)
+    # 1. Load-balanced self-hosted servers (EMBEDDING_BASE_URL, comma-separated)
+    base_urls = _resolve_embedding_base_urls()
+    model_id = embedding_model or "nvidia/NV-Embed-v2"
+    for attempt in range(1, per_backend_tries + 1):
+        target_url = base_urls[(attempt - 1) % len(base_urls)]
+        try:
+            resp = requests.post(
+                target_url,
+                json={"model": model_id, "input": text},
+                headers={"Content-Type": "application/json"},
+                timeout=120,
+            )
+            resp.raise_for_status()
+            return resp.json()["data"][0]["embedding"]
+        except Exception as e:
+            errors.append(f"self-hosted ({target_url}) attempt {attempt}: {repr(e)}")
+            time.sleep(2)
 
     # 2. third-party OpenAI-compatible API
     api_url = os.environ.get("EMBEDDING_API_BASE_URL")
@@ -402,6 +450,77 @@ def get_embedding(text, embedding_model=None):
 
     raise RuntimeError(
         "get_embedding failed for all backends. Errors:\n  "
+        + "\n  ".join(errors)
+    )
+
+
+def get_embeddings_batch(texts: List[str], embedding_model=None) -> List[List[float]]:
+    """Embed a list of texts in a single GPU call.
+
+    Uses the same backend priority as get_embedding but sends the entire
+    list in one HTTP request, exploiting GPU batch parallelism.  Falls
+    back to sequential per-text calls when the backend does not support
+    batch input.
+
+    Returns a list of embedding vectors in the same order as *texts*.
+    """
+    if not texts:
+        return []
+
+    cleaned = [(t or "")[:MAX_EMBEDDING_INPUT_CHARS] for t in texts]
+    errors: List[str] = []
+    per_backend_tries = 3
+
+    # 1. self-hosted server (supports array input natively; EMBEDDING_BASE_URL)
+    base_urls = _resolve_embedding_base_urls()
+    model_id = embedding_model or "nvidia/NV-Embed-v2"
+    for attempt in range(1, per_backend_tries + 1):
+        target_url = base_urls[(attempt - 1) % len(base_urls)]
+        try:
+            resp = requests.post(
+                target_url,
+                json={"model": model_id, "input": cleaned},
+                headers={"Content-Type": "application/json"},
+                timeout=120,
+            )
+            resp.raise_for_status()
+            data = resp.json()["data"]
+            # Sort by index to guarantee order matches input
+            data.sort(key=lambda d: d["index"])
+            return [d["embedding"] for d in data]
+        except Exception as e:
+            errors.append(f"self-hosted batch attempt {attempt}: {repr(e)}")
+            time.sleep(2)
+
+    # 2. third-party OpenAI-compatible API
+    api_url = os.environ.get("EMBEDDING_API_BASE_URL")
+    api_key = os.environ.get("EMBEDDING_API_KEY")
+    if api_url and api_key:
+        model_id = (embedding_model
+                    or os.environ.get("EMBEDDING_MODEL_NAME")
+                    or DEFAULT_EMBEDDING_MODEL_NAME)
+        for attempt in range(1, per_backend_tries + 1):
+            try:
+                client = OpenAI(base_url=api_url, api_key=api_key)
+                resp = client.embeddings.create(model=model_id, input=cleaned)
+                # Sort by index to guarantee order
+                sorted_data = sorted(resp.data, key=lambda d: d.index)
+                return [list(d.embedding) for d in sorted_data]
+            except Exception as e:
+                errors.append(f"third-party API batch attempt {attempt}: {repr(e)}")
+                time.sleep(2)
+
+    # 3. local fallback (sequential)
+    try:
+        return [
+            _get_embedding_local(t, model_name=embedding_model or "nvidia/NV-Embed-v2")
+            for t in cleaned
+        ]
+    except Exception as e:
+        errors.append(f"local batch: {repr(e)}")
+
+    raise RuntimeError(
+        "get_embeddings_batch failed for all backends. Errors:\n  "
         + "\n  ".join(errors)
     )
 

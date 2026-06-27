@@ -18,6 +18,10 @@ from plugmem.clients.llm import LLMClient, OpenAICompatibleLLMClient
 from plugmem.clients.llm_router import LLMRouter
 from plugmem.config import PlugMemConfig
 from plugmem.graph_manager import GraphManager
+import threading
+
+api_lock = threading.Lock()
+
 from plugmem.storage.chroma import ChromaStorage
 
 logger = logging.getLogger(__name__)
@@ -97,6 +101,12 @@ def get_embedder(config: PlugMemConfig | None = None) -> EmbeddingClient:
 
     cfg = config or get_config()
     openai_key = os.getenv("OPENAI_API_KEY", "")
+
+    if cfg.embedding_model == "nvidia/NV-Embed-v2" and not cfg.embedding_base_url:
+        raise ValueError(
+            "Server is configured to use 'nvidia/NV-Embed-v2' but EMBEDDING_BASE_URL is not set. "
+            "Please set EMBEDDING_BASE_URL to point to your NV-Embed-v2 embedding server to prevent silent degradation or dimension mismatches."
+        )
 
     if cfg.embedding_base_url:
         _embedding_client = HTTPEmbeddingClient(

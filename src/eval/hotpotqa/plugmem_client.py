@@ -28,20 +28,29 @@ def _headers() -> Dict[str, str]:
     return h
 
 
-def _post(path: str, body: Dict) -> Dict:
+def _post(path: str, body: Dict, timeout: Optional[int] = 1200) -> Dict:
     url = f"{_BASE_URL}/api/v1{path}"
     try:
-        r = requests.post(url, json=body, headers=_headers(), timeout=300)
+        r = requests.post(url, json=body, headers=_headers(), timeout=timeout)
         r.raise_for_status()
         return r.json()
     except Exception as e:
         raise RuntimeError(f"PlugMemClient POST {path} failed: {e}") from e
 
 
+
+def _delete(path: str, timeout: int = 300) -> None:
+    url = f"{_BASE_URL}/api/v1{path}"
+    try:
+        r = requests.delete(url, headers=_headers(), timeout=timeout)
+        r.raise_for_status()
+    except Exception as e:
+        raise RuntimeError(f"PlugMemClient DELETE {path} failed: {e}") from e
+
 def _get(path: str) -> Dict:
     url = f"{_BASE_URL}/api/v1{path}"
     try:
-        r = requests.get(url, headers=_headers(), timeout=10)
+        r = requests.get(url, headers=_headers(), timeout=180)
         r.raise_for_status()
         return r.json()
     except Exception as e:
@@ -62,6 +71,59 @@ class DummySemanticNode:
         return self.text
 
 
+class DummyEpisodicNode:
+    def __init__(self, episodic_id: int, observation: str = "", action: str = "", time: Any = "", subgoal: str = "", state: str = "", reward: str = ""):
+        self.episodic_id = episodic_id
+        self.observation = observation
+        self.action = action
+        self.time = time
+        self.subgoal = subgoal
+        self.state = state
+        self.reward = reward
+
+    def get_episodic_memory(self, date: bool = True) -> str:
+        parts = []
+        if self.observation:
+            parts.append(self.observation)
+        if self.action:
+            parts.append(self.action)
+        if date and self.time:
+            parts.append(str(self.time))
+        return "\n".join(parts) if parts else ""
+
+    def get_date(self) -> str:
+        return str(self.time) if self.time else ""
+
+
+class DummyProceduralNode:
+    def __init__(self, procedural_id: int, text: str = "", time: int = 0, subgoal: str = ""):
+        self.procedural_id = procedural_id
+        self.procedural_memory_str = text
+        self.subgoal = subgoal
+        self.time = time
+
+    def get_procedural_memory(self) -> str:
+        return self.procedural_memory_str
+
+
+class DummyTagNode:
+    def __init__(self, tag_id: int, tag: str, importance: int = 1, time: int = 0):
+        self.tag_id = tag_id
+        self.tag = tag
+        self.importance = importance
+        self.time = time
+
+
+class DummySubgoalNode:
+    def __init__(self, subgoal_id: int, subgoal: str, time: int = 0):
+        self.subgoal_id = subgoal_id
+        self.subgoal = subgoal
+        self.time = time
+
+    def get_subgoal(self) -> str:
+        return self.subgoal
+
+
 class PlugMemClient:
     """
     HTTP wrapper around the PlugMem FastAPI server.
@@ -72,10 +134,47 @@ class PlugMemClient:
         - get_stats()
     """
 
-    def __init__(self, graph_id: str = "default", auto_create: bool = True, **kwargs):
-        self.graph_id = graph_id
-        self.tag_relevant = DummyRelevant(kwargs.get("tag_relevant_k", 5))
-        self.semantic_relevant = DummyRelevant(kwargs.get("semantic_relevant_k", 5))
+    def __init__(self, graph_id: str = "default", auto_create: bool = True, log_file: Optional[str] = None, **kwargs):
+        if graph_id == "default":
+            self.graph_id = os.environ.get("PLUGMEM_GRAPH_ID", "default")
+        else:
+            self.graph_id = graph_id
+
+        tag_rel = kwargs.get("tag_relevant")
+        if tag_rel is not None:
+            self.tag_relevant = tag_rel
+        else:
+            self.tag_relevant = DummyRelevant(kwargs.get("tag_relevant_k", 5))
+
+        sem_rel = kwargs.get("semantic_relevant")
+        if sem_rel is not None:
+            self.semantic_relevant = sem_rel
+        else:
+            self.semantic_relevant = DummyRelevant(kwargs.get("semantic_relevant_k", 5))
+
+        # Add missing Original Contract attributes
+        self.tag_equal = kwargs.get("tag_equal", None)
+        self.semantic_equal = kwargs.get("semantic_equal", None)
+        self.semantic_relevant4episodic = kwargs.get("semantic_relevant4episodic", None)
+        self.subgoal_equal = kwargs.get("subgoal_equal", None)
+        self.subgoal_relevant = kwargs.get("subgoal_relevant", None)
+        self.procedural_equal = kwargs.get("procedural_equal", None)
+        self.procedural_relevant = kwargs.get("procedural_relevant", None)
+        
+        self.semantic_time = kwargs.get("semantic_time", 0)
+        self.procedural_time = kwargs.get("procedural_time", 0)
+        
+        self.log_file = log_file
+        self.logger = logging.getLogger("plugmem_client")
+        self.session_ids = []
+
+        if log_file:
+            try:
+                from utils import set_logger
+                set_logger(log_file)
+            except ImportError:
+                pass
+
         if auto_create:
             self._ensure_graph()
 
@@ -99,6 +198,16 @@ class PlugMemClient:
     # Insert
     # ------------------------------------------------------------------
 
+
+    def clear(self) -> None:
+        """Wipe the server-side graph state."""
+        try:
+            _delete(f"/graphs/{self.graph_id}")
+        except Exception as e:
+            logger.warning("Could not clear graph %s: %s", self.graph_id, e)
+        # Re-ensure graph exists
+        self._ensure_graph()
+
     def insert(self, mem) -> None:
         """
         Insert a Memory object (from memory_structuring.memory) into the graph.
@@ -113,6 +222,11 @@ class PlugMemClient:
             episodic = getattr(mem, "memory", {}).get("episodic", [])
             semantic = getattr(mem, "memory", {}).get("semantic", [])
             procedural = getattr(mem, "memory", {}).get("procedural", [])
+
+            # Pre-computed embeddings live in a separate dict on the Memory object
+            mem_embeddings = getattr(mem, "memory_embedding", {})
+            sem_embeddings = mem_embeddings.get("semantic", [])
+            proc_embeddings = mem_embeddings.get("procedural", [])
 
             # Normalize episodic to 2D list if it is a 1D list of dicts (HotpotQA format)
             if episodic and isinstance(episodic, (list, tuple)) and isinstance(episodic[0], dict):
@@ -137,20 +251,35 @@ class PlugMemClient:
 
                 # Build semantic nodes in structured format
                 semantic_payload = []
-                for s in semantic:
-                    semantic_payload.append({
+                for si, s in enumerate(semantic):
+                    sem_entry = {
                         "semantic_memory": str(s.get("semantic_memory", "") or ""),
                         "tags": [str(t) for t in s.get("tags", [])],
-                    })
+                    }
+                    # Try to get pre-computed embedding from memory_embedding first,
+                    # then fall back to inline embedding field
+                    if si < len(sem_embeddings) and sem_embeddings[si].get("semantic_memory") is not None:
+                        sem_entry["embedding"] = sem_embeddings[si]["semantic_memory"]
+                        if sem_embeddings[si].get("tags"):
+                            sem_entry["tag_embeddings"] = sem_embeddings[si]["tags"]
+                    elif s.get("embedding") is not None:
+                        sem_entry["embedding"] = s["embedding"]
+                    semantic_payload.append(sem_entry)
 
                 # Build procedural nodes in structured format
                 procedural_payload = []
-                for p in procedural:
-                    procedural_payload.append({
+                for pi, p in enumerate(procedural):
+                    proc_entry = {
                         "subgoal": str(p.get("subgoal", "") or ""),
                         "procedural_memory": str(p.get("procedural_memory", "") or ""),
                         "return": float(p.get("return", p.get("return_value", 0.0)) or 0.0),
-                    })
+                    }
+                    # Try to get pre-computed embedding from memory_embedding first
+                    if pi < len(proc_embeddings) and proc_embeddings[pi].get("subgoal") is not None:
+                        proc_entry["subgoal_embedding"] = proc_embeddings[pi]["subgoal"]
+                    elif p.get("embedding") is not None:
+                        proc_entry["subgoal_embedding"] = p["embedding"]
+                    procedural_payload.append(proc_entry)
 
                 body = {
                     "mode": "structured",
@@ -176,6 +305,15 @@ class PlugMemClient:
                     "session_id": session_id,
                 }
 
+            if hasattr(self.tag_equal, "value_threshold"):
+                body["tag_equal_threshold"] = getattr(self.tag_equal, "value_threshold")
+            if hasattr(self.semantic_equal, "value_threshold"):
+                body["semantic_equal_threshold"] = getattr(self.semantic_equal, "value_threshold")
+            if hasattr(self.procedural_equal, "value_threshold"):
+                body["procedural_equal_threshold"] = getattr(self.procedural_equal, "value_threshold")
+            if hasattr(self.subgoal_equal, "value_threshold"):
+                body["subgoal_equal_threshold"] = getattr(self.subgoal_equal, "value_threshold")
+            
             _post(f"/graphs/{self.graph_id}/memories", body)
             logger.info("Inserted memory into graph '%s'", self.graph_id)
 
@@ -214,6 +352,27 @@ class PlugMemClient:
             "min_confidence": min_confidence,
             "source_in": source_in,
         }
+        if hasattr(self.tag_relevant, "k"):
+            body["tag_k"] = getattr(self.tag_relevant, "k")
+        if hasattr(self.tag_relevant, "value_threshold"):
+            body["tag_threshold"] = getattr(self.tag_relevant, "value_threshold")
+        if hasattr(self.semantic_relevant, "k"):
+            body["semantic_k"] = getattr(self.semantic_relevant, "k")
+        if hasattr(self.semantic_relevant, "value_threshold"):
+            body["semantic_threshold"] = getattr(self.semantic_relevant, "value_threshold")
+        if hasattr(self.procedural_relevant, "k"):
+            body["procedural_k"] = getattr(self.procedural_relevant, "k")
+        if hasattr(self.procedural_relevant, "value_threshold"):
+            body["procedural_threshold"] = getattr(self.procedural_relevant, "value_threshold")
+        if hasattr(self.subgoal_relevant, "k"):
+            body["subgoal_k"] = getattr(self.subgoal_relevant, "k")
+        if hasattr(self.subgoal_relevant, "value_threshold"):
+            body["subgoal_threshold"] = getattr(self.subgoal_relevant, "value_threshold")
+        if hasattr(self, "semantic_relevant4episodic") and hasattr(self.semantic_relevant4episodic, "k"):
+            body["episodic_k"] = getattr(self.semantic_relevant4episodic, "k")
+        if hasattr(self, "semantic_relevant4episodic") and hasattr(self.semantic_relevant4episodic, "value_threshold"):
+            body["episodic_threshold"] = getattr(self.semantic_relevant4episodic, "value_threshold")
+
         result = _post(f"/graphs/{self.graph_id}/retrieve", body)
         messages  = result.get("reasoning_prompt", [])
         variables = result.get("variables", {})
@@ -223,6 +382,54 @@ class PlugMemClient:
     # ------------------------------------------------------------------
     # Consolidate / update
     # ------------------------------------------------------------------
+
+    def retrieve_and_reason(
+        self,
+        goal: str = "",
+        subgoal: str = "",
+        state: str = "",
+        observation: str = "",
+        time: Optional[int] = None,
+        task_type: str = "",
+        mode: Optional[str] = None,
+        min_confidence: float = 0.0,
+        source_in: Optional[List[str]] = None,
+        **kwargs,
+    ) -> str:
+        body = {
+            "goal": goal or "",
+            "subgoal": subgoal or "",
+            "state": state or "",
+            "observation": observation or "none",
+            "time": str(time) if time is not None else "",
+            "task_type": task_type or "",
+            "mode": mode,
+            "min_confidence": min_confidence,
+            "source_in": source_in,
+        }
+        if hasattr(self.tag_relevant, "k"):
+            body["tag_k"] = getattr(self.tag_relevant, "k")
+        if hasattr(self.tag_relevant, "value_threshold"):
+            body["tag_threshold"] = getattr(self.tag_relevant, "value_threshold")
+        if hasattr(self.semantic_relevant, "k"):
+            body["semantic_k"] = getattr(self.semantic_relevant, "k")
+        if hasattr(self.semantic_relevant, "value_threshold"):
+            body["semantic_threshold"] = getattr(self.semantic_relevant, "value_threshold")
+        if hasattr(self.procedural_relevant, "k"):
+            body["procedural_k"] = getattr(self.procedural_relevant, "k")
+        if hasattr(self.procedural_relevant, "value_threshold"):
+            body["procedural_threshold"] = getattr(self.procedural_relevant, "value_threshold")
+        if hasattr(self.subgoal_relevant, "k"):
+            body["subgoal_k"] = getattr(self.subgoal_relevant, "k")
+        if hasattr(self.subgoal_relevant, "value_threshold"):
+            body["subgoal_threshold"] = getattr(self.subgoal_relevant, "value_threshold")
+        if hasattr(self, "semantic_relevant4episodic") and hasattr(self.semantic_relevant4episodic, "k"):
+            body["episodic_k"] = getattr(self.semantic_relevant4episodic, "k")
+        if hasattr(self, "semantic_relevant4episodic") and hasattr(self.semantic_relevant4episodic, "value_threshold"):
+            body["episodic_threshold"] = getattr(self.semantic_relevant4episodic, "value_threshold")
+
+        result = _post(f"/graphs/{self.graph_id}/reason", body)
+        return result.get("reasoning", "")
 
     def update_semantic_subgraph(self, **kwargs) -> Dict:
         """Trigger consolidation on the server."""
@@ -236,7 +443,7 @@ class PlugMemClient:
             "only_update_recent_window":        kwargs.get("only_update_recent_window", None),
             "allow_merge_with_common_episodic_nodes": kwargs.get("allow_merge_with_common_episodic_nodes", False),
         }
-        return _post(f"/graphs/{self.graph_id}/consolidate", body)
+        return _post(f"/graphs/{self.graph_id}/consolidate", body, timeout=None)
 
     # ------------------------------------------------------------------
     # Stats (used by print_memory_graph_stats)
@@ -253,7 +460,7 @@ class PlugMemClient:
     @property
     def semantic_nodes(self) -> List[DummySemanticNode]:
         try:
-            result = _get(f"/graphs/{self.graph_id}/nodes?node_type=semantic&limit=10000")
+            result = _get(f"/graphs/{self.graph_id}/nodes?node_type=semantic&limit=50000")
             nodes = result.get("nodes", [])
             return [
                 DummySemanticNode(
@@ -267,40 +474,106 @@ class PlugMemClient:
             return []
 
     @property
-    def episodic_nodes(self) -> List:
+    def episodic_nodes(self) -> List[DummyEpisodicNode]:
         try:
-            result = _get(f"/graphs/{self.graph_id}/stats")
-            count = result.get("episodic", 0)
-            return [None] * count
-        except Exception:
+            result = _get(f"/graphs/{self.graph_id}/nodes?node_type=episodic&limit=50000")
+            nodes = result.get("nodes", [])
+            return [
+                DummyEpisodicNode(
+                    episodic_id=n.get("episodic_id", 0),
+                    observation=n.get("observation", ""),
+                    action=n.get("action", ""),
+                    time=n.get("time", ""),
+                    subgoal=n.get("subgoal", ""),
+                    state=n.get("state", ""),
+                    reward=n.get("reward", ""),
+                )
+                for n in nodes
+            ]
+        except Exception as e:
+            logger.warning("Could not fetch episodic nodes from server: %s", e)
             return []
 
     @property
-    def procedural_nodes(self) -> List:
+    def procedural_nodes(self) -> List[DummyProceduralNode]:
         try:
-            result = _get(f"/graphs/{self.graph_id}/stats")
-            count = result.get("procedural", 0)
-            return [None] * count
-        except Exception:
+            result = _get(f"/graphs/{self.graph_id}/nodes?node_type=procedural&limit=50000")
+            nodes = result.get("nodes", [])
+            return [
+                DummyProceduralNode(
+                    procedural_id=n.get("procedural_id", 0),
+                    text=n.get("procedural_memory", ""),
+                    time=n.get("time", 0),
+                    subgoal=n.get("subgoal", ""),
+                )
+                for n in nodes
+            ]
+        except Exception as e:
+            logger.warning("Could not fetch procedural nodes from server: %s", e)
             return []
 
     @property
-    def tag_nodes(self) -> List:
+    def tag_nodes(self) -> List[DummyTagNode]:
         try:
-            result = _get(f"/graphs/{self.graph_id}/stats")
-            count = result.get("tag", 0)
-            return [None] * count
-        except Exception:
+            result = _get(f"/graphs/{self.graph_id}/nodes?node_type=tag&limit=50000")
+            nodes = result.get("nodes", [])
+            return [
+                DummyTagNode(
+                    tag_id=n.get("tag_id", 0),
+                    tag=n.get("tag", ""),
+                    importance=n.get("importance", 1),
+                    time=n.get("time", 0),
+                )
+                for n in nodes
+            ]
+        except Exception as e:
+            logger.warning("Could not fetch tag nodes from server: %s", e)
             return []
 
     @property
-    def subgoal_nodes(self) -> List:
+    def subgoal_nodes(self) -> List[DummySubgoalNode]:
         try:
-            result = _get(f"/graphs/{self.graph_id}/stats")
-            count = result.get("subgoal", 0)
-            return [None] * count
-        except Exception:
+            result = _get(f"/graphs/{self.graph_id}/nodes?node_type=subgoal&limit=50000")
+            nodes = result.get("nodes", [])
+            return [
+                DummySubgoalNode(
+                    subgoal_id=n.get("subgoal_id", 0),
+                    subgoal=n.get("subgoal", ""),
+                    time=n.get("time", 0),
+                )
+                for n in nodes
+            ]
+        except Exception as e:
+            logger.warning("Could not fetch subgoal nodes from server: %s", e)
             return []
+
+    @property
+    def semantic_id2node(self) -> Dict[int, DummySemanticNode]:
+        return {x.semantic_id: x for x in self.semantic_nodes}
+
+    @property
+    def episodic_id2node(self) -> Dict[int, DummyEpisodicNode]:
+        return {x.episodic_id: x for x in self.episodic_nodes}
+
+    @property
+    def procedural_id2node(self) -> Dict[int, DummyProceduralNode]:
+        return {x.procedural_id: x for x in self.procedural_nodes}
+
+    @property
+    def subgoal_id2node(self) -> Dict[int, DummySubgoalNode]:
+        return {x.subgoal_id: x for x in self.subgoal_nodes}
+
+    @property
+    def tag_id2node(self) -> Dict[int, DummyTagNode]:
+        return {x.tag_id: x for x in self.tag_nodes}
+
+    @property
+    def tag2node(self) -> Dict[str, DummyTagNode]:
+        return {x.tag: x for x in self.tag_nodes}
+
+    @property
+    def subgoal2node(self) -> Dict[str, DummySubgoalNode]:
+        return {x.subgoal: x for x in self.subgoal_nodes}
 
     # ------------------------------------------------------------------
     # Compatibility interface methods

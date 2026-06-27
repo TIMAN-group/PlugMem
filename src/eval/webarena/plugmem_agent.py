@@ -231,7 +231,7 @@ class AgentOccamWithMemory(AgentOccam):
                     step_idx=self.get_step()
                 )
                 
-                retrieved_memory_str = call_gpt(messages=messages, model_id="CalamitousFelicitousness/Qwen2.5-32B-Instruct-fp8-dynamic")
+                retrieved_memory_str = call_gpt(messages=messages, model_id="gpt-4o")
                 self.actor.retrieved_memory = retrieved_memory_str
                 print(f"Sel Type: {sel_type}, Retrieved memory: {retrieved_memory_str}")
                 

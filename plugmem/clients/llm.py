@@ -90,18 +90,27 @@ class OpenAICompatibleLLMClient(LLMClient):
         self.token_usage_file = token_usage_file
 
         if is_azure:
-            self._client = AzureOpenAI(
-                azure_endpoint=base_url,
-                api_key=api_key,
-                api_version=azure_api_version,
-                default_headers={"ngrok-skip-browser-warning": "true"},
-            )
+            urls = [u.strip() for u in base_url.split(",") if u.strip()]
+            self._clients = [
+                AzureOpenAI(
+                    azure_endpoint=url,
+                    api_key=api_key,
+                    api_version=azure_api_version,
+                    default_headers={"ngrok-skip-browser-warning": "true"},
+                ) for url in urls
+            ]
         else:
-            self._client = OpenAI(
-                base_url=base_url, 
-                api_key=api_key,
-                default_headers={"ngrok-skip-browser-warning": "true"},
-            )
+            urls = [u.strip() for u in base_url.split(",") if u.strip()]
+            self._clients = [
+                OpenAI(
+                    base_url=url,
+                    api_key=api_key,
+                    default_headers={"ngrok-skip-browser-warning": "true"},
+                ) for url in urls
+            ]
+
+        import itertools
+        self._client_cycle = itertools.cycle(self._clients)
 
     def complete(
         self,
@@ -113,7 +122,8 @@ class OpenAICompatibleLLMClient(LLMClient):
         for attempt in range(1, self.max_retries + 1):
             try:
                 start_time = time.perf_counter()
-                response = self._client.chat.completions.create(
+                client = next(self._client_cycle)
+                response = client.chat.completions.create(
                     model=self.model,
                     messages=messages,
                     temperature=temperature,

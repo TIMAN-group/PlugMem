@@ -8,6 +8,8 @@ import json
 import os
 import sys
 import traceback
+import logging
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 from datetime import datetime
 from typing import Dict, Any, Optional, Tuple
 import argparse
@@ -19,15 +21,20 @@ from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
 current_dir = os.path.dirname(os.path.abspath(__file__))
 parent_dir = os.path.abspath(os.path.join(current_dir, "../.."))
 sys.path.append(parent_dir)
+sys.path.append(current_dir)
 
 from memory_structuring.memory import Memory
 from memory_structuring.structuring_inference import get_semantic, get_procedural
-from memory_retrieving.memory_graph import MemoryGraph
+import os
+if os.environ.get("PLUGMEM_API_URL"):
+    from plugmem_client import PlugMemClient as MemoryGraph
+else:
+    from memory_retrieving.memory_graph import MemoryGraph
 from memory_retrieving.value_longmemeval import (
     TagEqual, TagRelevant, SemanticEqual, SemanticRelevant,
     SubgoalEqual, SubgoalRelevant, ProceduralEqual, ProceduralRelevant
 )
-from utils import get_embedding
+from utils import get_embedding, get_embeddings_batch
 from funcs_eval import HOTPOTQA_CORPUS_PATH, MUSIQUE_CORPUS_PATH
 
 
@@ -50,21 +57,60 @@ def _process_single_data(idx: int, data: Dict[str, Any], emb_model: str, max_try
             }]
             memory.memory["episodic"] = episodic_memory
 
+            t0 = time.time()
             semantic_memory = get_semantic(
                 step={"observation": obs},
                 trajectory_num=0,
                 turn_num=0,
                 time=""
             )
+            t1 = time.time()
+            logger.info(f"[Perf] get_semantic for idx {idx} took {t1 - t0:.2f} seconds")
 
             memory.memory["semantic"] = semantic_memory
-            for sm in semantic_memory:
-                memory.memory_embedding["semantic"].append({
-                    "semantic_memory": get_embedding(sm["semantic_memory"], emb_model),
-                    "tags": [get_embedding(tag, emb_model) for tag in sm["tags"]]
-                })
+            # Collect all texts that need embedding in one flat list
+            all_texts = []
+            text_map = []  # track (type, semantic_idx, sub_idx_or_None)
+            for si, sm in enumerate(semantic_memory):
+                all_texts.append(sm["semantic_memory"])
+                text_map.append(("sem", si, None))
+                for ti, tag in enumerate(sm["tags"]):
+                    all_texts.append(tag)
+                    text_map.append(("tag", si, ti))
 
+            t4 = time.time()
             procedural_memory, goal, _return = get_procedural(trajectory=obs)
+            # Add procedural texts to the same batch
+            all_texts.append(procedural_memory)
+            text_map.append(("proc_mem", 0, None))
+            all_texts.append(goal)
+            text_map.append(("proc_goal", 0, None))
+
+            # Single batched GPU call for ALL embeddings
+            t_batch0 = time.time()
+            all_embeddings = get_embeddings_batch(all_texts, emb_model)
+            t_batch1 = time.time()
+            logger.info(f"[Perf] get_embeddings_batch for idx {idx} took {t_batch1 - t_batch0:.2f} seconds")
+
+            # Distribute embeddings back to their respective structures
+            sem_embeddings = {}  # si -> {"semantic_memory": emb, "tags": [emb, ...]}
+            proc_mem_emb = None
+            proc_goal_emb = None
+            for i, (kind, si, ti) in enumerate(text_map):
+                emb = all_embeddings[i]
+                if kind == "sem":
+                    sem_embeddings.setdefault(si, {"semantic_memory": None, "tags": []})
+                    sem_embeddings[si]["semantic_memory"] = emb
+                elif kind == "tag":
+                    sem_embeddings.setdefault(si, {"semantic_memory": None, "tags": []})
+                    sem_embeddings[si]["tags"].append(emb)
+                elif kind == "proc_mem":
+                    proc_mem_emb = emb
+                elif kind == "proc_goal":
+                    proc_goal_emb = emb
+
+            for si in range(len(semantic_memory)):
+                memory.memory_embedding["semantic"].append(sem_embeddings[si])
             memory.memory["procedural"].append({
                 "subgoal": goal,
                 "procedural_memory": procedural_memory,
@@ -73,10 +119,13 @@ def _process_single_data(idx: int, data: Dict[str, Any], emb_model: str, max_try
                 "return": _return,
             })
 
+            t6 = time.time()
             memory.memory_embedding["procedural"].append({
-                "procedural_memory": get_embedding(procedural_memory, emb_model),
-                "subgoal": get_embedding(goal, emb_model)
+                "procedural_memory": proc_mem_emb,
+                "subgoal": proc_goal_emb
             })
+            t7 = time.time()
+            logger.info(f"[Perf] get_embedding (procedural) for idx {idx} took {t7 - t6:.2f} seconds")
             return idx,memory
 
         except Exception as e:
@@ -90,7 +139,7 @@ def _process_single_data(idx: int, data: Dict[str, Any], emb_model: str, max_try
     return idx, None
 
 
-def concurrent_main(mg: MemoryGraph,start_idx: int,end_idx: int,from_disk_only: bool, num_workers: int = 4, chunk_size: int = 50):
+def concurrent_main(mg: MemoryGraph,start_idx: int,end_idx: Optional[int],from_disk_only: bool, num_workers: int = 4, chunk_size: int = 50):
     if from_disk_only:
         if DIR_PATH is None:
             raise ValueError("DIR_PATH environment variable is not set.")
@@ -99,7 +148,10 @@ def concurrent_main(mg: MemoryGraph,start_idx: int,end_idx: int,from_disk_only: 
     
     # Load corpus
     with open(corpus_path, "r", encoding="utf-8") as f:
-        corpus = json.load(f)[start_idx:end_idx + 1]
+        corpus_data = json.load(f)
+    if end_idx is None or end_idx < 0:
+        end_idx = len(corpus_data) - 1
+    corpus = corpus_data[start_idx:end_idx + 1]
     
     # Load existing memory graph from disk
     mg.build_mem_from_disk_hpqa_ver(DIR_PATH)
@@ -115,6 +167,13 @@ def concurrent_main(mg: MemoryGraph,start_idx: int,end_idx: int,from_disk_only: 
                 f.write(json.dumps(rec, ensure_ascii=False) + "\n")
         map_buffer.clear()
 
+    completed_indices = set()
+    if os.path.exists(MAP_PATH):
+        with open(MAP_PATH, "r", encoding="utf-8") as f:
+            for line in f:
+                if line.strip():
+                    completed_indices.add(json.loads(line)["corpus_idx"])
+
     with ThreadPoolExecutor(max_workers=num_workers) as ex:
         pending_set = set()
         next_i = 0  # corpus 内偏移
@@ -123,6 +182,9 @@ def concurrent_main(mg: MemoryGraph,start_idx: int,end_idx: int,from_disk_only: 
         # 先填满窗口
         while next_i < corpus_len and len(pending_set) < chunk_size:
             idx = start_idx + next_i
+            if idx in completed_indices:
+                next_i += 1
+                continue
             future = ex.submit(_process_single_data, idx, corpus[next_i], EMBEDDING_MODEL)
             pending_set.add(future)
             next_i += 1
@@ -134,9 +196,12 @@ def concurrent_main(mg: MemoryGraph,start_idx: int,end_idx: int,from_disk_only: 
             for future in done:
                 idx, memory = future.result()
                 if memory is not None:
-                    sem_num_before = len(mg.semantic_nodes)
+                    sem_num_before = mg.get_stats().get("semantic", 0)
+                    t_save0 = time.time()
                     mg.insert_hpqa_ver(memory)
-                    sem_num_after = len(mg.semantic_nodes)
+                    t_save1 = time.time()
+                    logger.info(f"[Perf] Database Save for idx {idx} took {t_save1 - t_save0:.2f} seconds")
+                    sem_num_after = mg.get_stats().get("semantic", 0)
 
                     if sem_num_after > sem_num_before:
                         map_buffer.append({
@@ -150,18 +215,22 @@ def concurrent_main(mg: MemoryGraph,start_idx: int,end_idx: int,from_disk_only: 
                     flush_mapping()
 
                 # 补充提交新的任务，维持窗口大小
-                if next_i < corpus_len:
+                while next_i < corpus_len:
                     new_idx = start_idx + next_i
+                    if new_idx in completed_indices:
+                        next_i += 1
+                        continue
                     new_fut = ex.submit(_process_single_data, new_idx, corpus[next_i], EMBEDDING_MODEL)
                     pending_set.add(new_fut)
                     next_i += 1
+                    break
 
         flush_mapping()
 
 
 
 
-def main( mg: MemoryGraph, start_idx: int, end_idx: int, from_disk_only: bool) -> None:
+def main( mg: MemoryGraph, start_idx: int, end_idx: Optional[int], from_disk_only: bool) -> None:
     if from_disk_only:
         if DIR_PATH is None:
             raise ValueError("DIR_PATH environment variable is not set.")
@@ -170,7 +239,10 @@ def main( mg: MemoryGraph, start_idx: int, end_idx: int, from_disk_only: bool) -
     
     # Load corpus
     with open(corpus_path, "r", encoding="utf-8") as f:
-        corpus = json.load(f)[start_idx:end_idx + 1]
+        corpus_data = json.load(f)
+    if end_idx is None or end_idx < 0:
+        end_idx = len(corpus_data) - 1
+    corpus = corpus_data[start_idx:end_idx + 1]
     
     # Load existing memory graph from disk
     mg.build_mem_from_disk_hpqa_ver(DIR_PATH)
@@ -183,9 +255,9 @@ def main( mg: MemoryGraph, start_idx: int, end_idx: int, from_disk_only: bool) -
         
         if memory is not None:
             
-            sem_num_before = len(mg.semantic_nodes)
+            sem_num_before = mg.get_stats().get("semantic", 0)
             mg.insert_hpqa_ver(memory)
-            sem_num_after = len(mg.semantic_nodes)
+            sem_num_after = mg.get_stats().get("semantic", 0)
             logger.info(f"insert new memory for item {idx}")
             
             # Save mapping if new semantic nodes were added
@@ -219,7 +291,8 @@ if __name__ == "__main__":
     )
     parser.add_argument("--bench_name", type=str, default="hotpotqa",)
     parser.add_argument("--start_idx", type=int, default=0,)
-    parser.add_argument("--end_idx", type=int, default=9,)
+    parser.add_argument("--end_idx", type=int, default=None,
+                        help="Last index of corpus to process (defaults to the end of the corpus if omitted)")
     parser.add_argument("--num_workers", type=int, default=8,)
     parser.add_argument("--chunk_size", type=int, default=30,)
     parser.add_argument("--emb_model", type=str, default="NV-Embed-v2",

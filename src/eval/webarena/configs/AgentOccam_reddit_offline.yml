@@ -16,7 +16,7 @@ agent:
     debug: 0
     verbose: 1
     number: 1
-    model: "CalamitousFelicitousness/Qwen2.5-32B-Instruct-fp8-dynamic"
+    model: "gpt-4o"
     documented_interaction_elements: ["url", "plan", "reason", "observation summary",
       "retained element ids", "observation highlight"]
     online_interaction_elements: ["tabs"]
@@ -41,7 +41,7 @@ agent:
     mode: False
     debug: 0
     verbose: 1
-    model: "CalamitousFelicitousness/Qwen2.5-32B-Instruct-fp8-dynamic"
+    model: "gpt-4o"
     documented_interaction_elements: []
     online_interaction_elements: ["tabs"]
     character: "normal"
@@ -59,7 +59,7 @@ agent:
     mode: True
     debug: 0
     verbose: 1
-    model: "CalamitousFelicitousness/Qwen2.5-32B-Instruct-fp8-dynamic"
+    model: "gpt-4o"
     documented_interaction_elements: []
     online_interaction_elements: ["tabs"]
     strict: False

@@ -101,9 +101,9 @@ consolidation:
         assert router.consolidation.model == "consol-model"
 
         # structuring inherits base_url from default (OpenAI SDK normalises with trailing /)
-        assert "localhost:8000" in str(router.structuring._client.base_url)
+        assert "localhost:8000" in str(router.structuring._clients[0].base_url)
         # reasoning overrides base_url
-        assert "other:9000" in str(router.reasoning._client.base_url)
+        assert "other:9000" in str(router.reasoning._clients[0].base_url)
     finally:
         os.unlink(path)
 

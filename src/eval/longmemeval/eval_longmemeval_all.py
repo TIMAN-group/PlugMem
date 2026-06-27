@@ -9,6 +9,7 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 parent_dir = os.path.abspath(os.path.join(current_dir, "../.."))
 # 添加到 sys.path
 sys.path.append(parent_dir)
+sys.path.append(current_dir)
 from memory_structuring.memory import Memory
 from plugmem_client import PlugMemClient as MemoryGraph
 from memory_retrieving.value_longmemeval import TagEqual, TagRelevant, SemanticEqual, SemanticRelevant, SubgoalEqual, SubgoalRelevant, ProceduralEqual, ProceduralRelevant

@@ -26,6 +26,7 @@ def test_nested_phases_restore_outer():
 def test_phase_appears_in_log_entry(tmp_path):
     """The LLM client logs the active phase from `with_phase` into each
     JSONL token-usage record."""
+    import itertools
     import json
 
     from plugmem.clients.llm import OpenAICompatibleLLMClient
@@ -54,13 +55,15 @@ def test_phase_appears_in_log_entry(tmp_path):
     fake_client.max_retries = 1
     fake_client.retry_delay = 0.01
     fake_client.token_usage_file = str(log_path)
-    fake_client._client = type("C", (), {
+    fake_inner = type("C", (), {
         "chat": type("Chat", (), {
             "completions": type("Comp", (), {
                 "create": staticmethod(lambda **kw: FakeResponse()),
             })(),
         })(),
     })()
+    fake_client._clients = [fake_inner]
+    fake_client._client_cycle = itertools.cycle(fake_client._clients)
 
     messages = [{"role": "user", "content": "hi"}]
 
