@@ -148,7 +148,42 @@ curl -s http://localhost:8080/api/v1/graphs/my-agent/stats \
 
 `stats.semantic` should be `>= 1`.
 
-## 5. What the agent sees
+You can also poke at the same graph visually — see the next section.
+
+## 5. Inspect what was remembered (Memory Inspector)
+
+PlugMem ships a built-in web UI at `http://localhost:8080/inspector/` (the
+root `/` redirects there). No build step, no separate service — it's served
+as static assets from the same FastAPI process you started in step 1.
+
+Pick `my-agent` from the graph picker. Four tabs:
+
+- **Browse** — list every semantic / procedural / tag / subgoal / episodic
+  node, substring-search, and deactivate wrong facts (semantic only,
+  reversible — sets `is_active=false`).
+- **Recall trace** — paste the same `observation` you'd send to
+  `plugmem.recall` and see why each candidate did or didn't make the final
+  cut: per-node relevance, recency, importance, credibility, value, plus
+  the rendered prompt that would be sent to the LLM.
+- **Graph** — cytoscape topology view with per-type / per-edge toggles
+  and PNG export. Switch the theme picker to **pixel office** for a
+  floor-plan rendering of the same data.
+- **Sessions** — chronological timeline of inserts *and* recalls grouped
+  by `session_id`. This is the most useful tab for OpenClaw users: each
+  auto-remember from `before_reset` / `before_compaction` shows up here
+  with every memory the trajectory pipeline produced from it, alongside
+  the recalls that hit the same session.
+
+If you set `PLUGMEM_API_KEY`, click **key** in the top-right of the
+inspector and paste the same value — it's stored in `localStorage` and
+sent as `X-API-Key` on every request.
+
+If you have no graphs yet, the inspector shows a "Load demo graph" banner
+that seeds a populated graph (a coding-agent session and a personal
+travel session) so you can explore the tabs before pointing real traffic
+at the service.
+
+## 6. What the agent sees
 
 ### `plugmem.remember`
 

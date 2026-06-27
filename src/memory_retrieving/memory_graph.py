@@ -37,7 +37,7 @@ class MemoryGraph:
                  subgoal_relevant: ValueBase=SubgoalRelevant(), 
                  procedural_equal: ValueBase=ProceduralEqual(), 
                  procedural_relevant: ValueBase=ProceduralRelevant(),
-                 log_file: str=None
+                 log_file: str=None, load_from_disk: bool=False, refresh_embeddings: bool=False
                  ):
 
         self.tag_equal = tag_equal
@@ -1384,6 +1384,8 @@ class MemoryGraph:
             )
         self.logger.info(f"task_type: {task_type}")
         self.logger.info(f"----- mode -----: {mode}")
+        if mode:
+            mode = mode.replace("#", "").replace("*", "").strip()
         
         if mode == "episodic_memory":
             prompt_template = DefaultEpisodicPrompt()
