@@ -1137,6 +1137,9 @@ class MemoryGraph:
         sensible no-LLM fallbacks are used so the demo works without any
         LLM service configured.
         """
+        import time as time_mod
+        start_time = time_mod.perf_counter()
+
         # 1. Plan / mode resolution
         plan_source: Dict[str, str] = {}
         if mode is None:
@@ -1251,6 +1254,16 @@ class MemoryGraph:
         }
         rendered = prompt_template.build_messages(variables)
         rendered_prompt = [{"role": m.role, "content": m.content} for m in rendered]
+
+        # Record retrieval latency / retrieved memory into the request log context.
+        # retrieve_with_trace is the API route entrypoint, so the instrumentation
+        # must live here (mirrors retrieve_memory).
+        from plugmem.api.logging_ctx import current_log_ctx
+        ctx = current_log_ctx.get()
+        if ctx is not None:
+            retrieved_mem = variables.get(mode, "")
+            latency = time_mod.perf_counter() - start_time
+            ctx.record_retrieval(mode=mode, latency_sec=latency, retrieved_mem=retrieved_mem)
 
         return {
             "mode": mode,

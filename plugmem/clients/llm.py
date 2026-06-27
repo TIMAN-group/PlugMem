@@ -96,12 +96,19 @@ class OpenAICompatibleLLMClient(LLMClient):
                     azure_endpoint=url,
                     api_key=api_key,
                     api_version=azure_api_version,
+                    default_headers={"ngrok-skip-browser-warning": "true"},
                 ) for url in urls
             ]
         else:
             urls = [u.strip() for u in base_url.split(",") if u.strip()]
-            self._clients = [OpenAI(base_url=url, api_key=api_key) for url in urls]
-            
+            self._clients = [
+                OpenAI(
+                    base_url=url,
+                    api_key=api_key,
+                    default_headers={"ngrok-skip-browser-warning": "true"},
+                ) for url in urls
+            ]
+
         import itertools
         self._client_cycle = itertools.cycle(self._clients)
 

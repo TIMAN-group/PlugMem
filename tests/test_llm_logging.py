@@ -1,6 +1,7 @@
 """Unit tests for LLM client logging hooks."""
 from __future__ import annotations
 
+import itertools
 from unittest.mock import MagicMock
 from plugmem.api.logging_ctx import RequestContextLog, current_log_ctx
 from plugmem.clients.llm import OpenAICompatibleLLMClient
@@ -29,8 +30,10 @@ def test_llm_logging_hook():
         api_key="fake-key",
         model="test-coder-model",
     )
-    client._client = MagicMock()
-    client._client.chat.completions.create.return_value = mock_response
+    mock_inner = MagicMock()
+    mock_inner.chat.completions.create.return_value = mock_response
+    client._clients = [mock_inner]
+    client._client_cycle = itertools.cycle(client._clients)
 
     # Initialize request-scoped log context
     log = RequestContextLog(task_id="llm-trace-task")
