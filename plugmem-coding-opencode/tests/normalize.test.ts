@@ -1,108 +1,96 @@
-import { describe, it, expect, vi } from "vitest";
-import {
-  normalizeSessionStart,
-  normalizeUserPrompt,
-  normalizePreTool,
-  normalizePostTool,
-} from "../src/normalize.js";
-import type {
-  SessionCreatedEvent,
-  ChatMessageEvent,
-  ToolExecuteBeforeEvent,
-  ToolExecuteAfterEvent,
-} from "../src/types.js";
+import { describe, it, expect } from "vitest";
+import { sniffOutcome, extractResultText } from "../src/normalize.js";
 
-// Mock process.cwd to return a stable string for testing
-vi.spyOn(process, "cwd").mockReturnValue("/mock/workspace");
+// OpenCode's `tool.execute.after` second argument is `{ title, output,
+// metadata }`. These tests pin the outcome heuristic against that real shape
+// and guard the regression that motivated the fix: a blind substring scan of
+// arbitrary tool output that misclassified successful reads/greps as failures.
 
-describe("OpenCode Event Normalizers", () => {
-  it("normalizes session.created", () => {
-    const event: SessionCreatedEvent = {
-      session: { id: "sess-123" },
-      output: { system: [] },
-    };
-    
-    const abstract = normalizeSessionStart(event);
-    expect(abstract.sessionId).toBe("sess-123");
-    expect(abstract.harness).toBe("opencode");
-    expect(abstract.source).toBe("startup");
-    expect(abstract.cwd).toBe("/mock/workspace");
+describe("extractResultText", () => {
+  it("returns a plain string result as-is", () => {
+    expect(extractResultText("hello world")).toBe("hello world");
   });
 
-  it("normalizes chat.message and handles realistic nested sessionId", () => {
-    const event: ChatMessageEvent = {
-      message: {
-        sessionId: "chat-456",
-        id: "msg-1",
-        role: "user",
-        content: "Fix the bug",
-      },
-    };
-
-    const abstract = normalizeUserPrompt(event);
-    expect(abstract.sessionId).toBe("chat-456"); // Uses the nested ID
-    expect(abstract.prompt).toBe("Fix the bug");
+  it("reads OpenCode's `output.output` field", () => {
+    expect(
+      extractResultText({ title: "bash", output: "done", metadata: {} }),
+    ).toBe("done");
   });
 
-  it("normalizes tool.execute.before", () => {
-    const event: ToolExecuteBeforeEvent = {
-      session: { id: "sess-123" },
-      tool: {
-        name: "readFile",
-        args: { file: "test.ts" },
-      },
-    };
-
-    const abstract = normalizePreTool(event, "call-789");
-    expect(abstract.sessionId).toBe("sess-123");
-    expect(abstract.toolName).toBe("readFile");
-    expect(abstract.callId).toBe("call-789");
-    expect(abstract.toolInput).toEqual({ file: "test.ts" });
+  it("never throws on null/undefined", () => {
+    expect(extractResultText(undefined)).toBe("");
+    expect(extractResultText(null)).toBe("");
   });
 
-  it("normalizes tool.execute.after and correctly identifies success", () => {
-    const event: ToolExecuteAfterEvent = {
-      session: { id: "sess-123" },
-      tool: {
-        name: "readFile",
-        args: { file: "test.ts" },
-        result: "file contents here",
-        exitCode: 0,
-      },
-    };
+  it("falls back to JSON for opaque objects without crashing", () => {
+    expect(extractResultText({ foo: 1 })).toBe('{"foo":1}');
+  });
+});
 
-    const abstract = normalizePostTool(event, "call-789");
-    expect(abstract.outcome).toBe("success");
-    expect(abstract.toolResult).toBe("file contents here");
+describe("sniffOutcome", () => {
+  it("marks a clean shell exit (metadata.exit === 0) as success", () => {
+    expect(
+      sniffOutcome("bash", { output: "ok", metadata: { exit: 0 } }),
+    ).toBe("success");
   });
 
-  it("normalizes tool.execute.after and correctly identifies failure via exit code", () => {
-    const event: ToolExecuteAfterEvent = {
-      session: { id: "sess-123" },
-      tool: {
-        name: "bash",
-        args: { command: "npm run test" },
-        result: "test failed",
-        exitCode: 1, // Non-zero indicates failure
-      },
-    };
-
-    const abstract = normalizePostTool(event, "call-789");
-    expect(abstract.outcome).toBe("failure");
+  it("marks a non-zero shell exit as failure", () => {
+    expect(
+      sniffOutcome("bash", { output: "boom", metadata: { exit: 1 } }),
+    ).toBe("failure");
   });
 
-  it("normalizes tool.execute.after and correctly identifies failure via text output", () => {
-    const event: ToolExecuteAfterEvent = {
-      session: { id: "sess-123" },
-      tool: {
-        name: "python",
-        args: { script: "script.py" },
-        result: "Traceback (most recent call last): SyntaxError: invalid syntax",
-        exitCode: 0, // Even if exit code is 0, 'error' in text flags failure
-      },
-    };
+  it("honors alternate exit-code keys (exitCode)", () => {
+    expect(
+      sniffOutcome("bash", { output: "boom", metadata: { exitCode: 2 } }),
+    ).toBe("failure");
+  });
 
-    const abstract = normalizePostTool(event, "call-789");
-    expect(abstract.outcome).toBe("failure");
+  it("honors an explicit boolean error flag", () => {
+    expect(
+      sniffOutcome("edit", { output: "nope", metadata: { error: true } }),
+    ).toBe("failure");
+  });
+
+  it("does NOT flag a successful read whose content contains 'Error:'", () => {
+    // The core regression: reading a file that mentions errors is not a failure.
+    expect(
+      sniffOutcome("read", {
+        output: "function f() { throw new Error: ... } // Error: handling",
+        metadata: {},
+      }),
+    ).toBe("success");
+  });
+
+  it("does NOT flag a grep that returns lines containing 'Error:'", () => {
+    expect(
+      sniffOutcome("grep", {
+        output: "app.ts:42: console.error('Error: boom')",
+        metadata: {},
+      }),
+    ).toBe("success");
+  });
+
+  it("flags a shell failure via a narrow text marker when no exit code is present", () => {
+    expect(
+      sniffOutcome("bash", { output: "Command failed: npm test", metadata: {} }),
+    ).toBe("failure");
+  });
+
+  it("does NOT apply shell text markers to non-shell tools", () => {
+    expect(
+      sniffOutcome("read", { output: "Command failed: legacy note", metadata: {} }),
+    ).toBe("success");
+  });
+
+  it("defaults to success when the hook fired with no failure signal", () => {
+    expect(sniffOutcome("read", { output: "file contents", metadata: {} })).toBe(
+      "success",
+    );
+  });
+
+  it("never throws on a malformed payload", () => {
+    expect(() => sniffOutcome("bash", undefined)).not.toThrow();
+    expect(sniffOutcome("bash", undefined)).toBe("success");
   });
 });

@@ -7,6 +7,8 @@ import {
   normalizePostTool,
   normalizePreCompact,
   normalizeSessionEnd,
+  sniffOutcome,
+  extractResultText,
 } from "./normalize.js";
 import type { Plugin, PluginContext, PluginHooks } from "./types.js";
 import * as fs from "fs";
@@ -51,28 +53,25 @@ export const PlugMemPlugin: Plugin = async (ctx: PluginContext): Promise<PluginH
          });
        } catch (err: any) { logDebug(`ERROR IN PRE TOOL: ${err.message}`); }
     },
-    'tool.execute.after': async ({ tool, sessionID, callID }: any, { args, result, error }: any) => {
+    // OpenCode signature: (input: { tool, sessionID, callID, args }, output: { title, output, metadata }).
+    // `args` is on the FIRST arg; the result text is `output.output` (NOT a
+    // `result`/`error` field, which is why the old `{ args, result, error }`
+    // destructure read undefined and `resStr.includes(...)` threw — silently
+    // killing every post-tool detection).
+    'tool.execute.after': async ({ tool, sessionID, callID, args }: any, output: any) => {
        logDebug(`TOOL AFTER: ${tool} ${callID}`);
        try {
-         let outcome: "success" | "failure" | "unknown" = "success";
-         const resStr = typeof result === 'string' ? result : JSON.stringify(result);
-         
-         if (error) {
-            outcome = "failure";
-         } else if (result && typeof result === "object" && result.exitCode && result.exitCode !== 0) {
-            outcome = "failure";
-         } else if (resStr.includes("Command failed:") || resStr.includes("Error:")) {
-            outcome = "failure";
-         }
+         const resStr = extractResultText(output);
+         const outcome = sniffOutcome(tool, output);
 
          await core.onPostTool({
             harness: "opencode",
             sessionId: sessionID || "default-session",
             cwd: ctx.directory,
             toolName: tool,
-            toolInput: typeof args === 'string' ? args : JSON.stringify(args),
+            toolInput: args === undefined ? "" : typeof args === 'string' ? args : JSON.stringify(args),
             callId: callID || "",
-            toolResult: error ? String(error) : resStr,
+            toolResult: resStr,
             outcome
          });
        } catch (err: any) { logDebug(`ERROR IN POST TOOL: ${err.message}`); }
