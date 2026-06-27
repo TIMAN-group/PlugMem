@@ -76,6 +76,9 @@ def migrate_longmemeval(
         embedding = _to_float_list(item.get("semantic_embedding"))
         if embedding is None and text:
             embedding = embedder.embed(text)
+        epis_ids = item.get("episodic_nodes", [])
+        if not epis_ids:
+            epis_ids = item.get("episodic_ids", [item["episodic_id"]] if "episodic_id" in item else [])
         storage.add_semantic(
             graph_id,
             semantic_id=item["semantic_id"],
@@ -83,7 +86,7 @@ def migrate_longmemeval(
             embedding=embedding,
             tags=item.get("tags", []),
             time=item.get("time", 0),
-            episodic_ids=item.get("episodic_nodes", []),
+            episodic_ids=epis_ids,
             session_id=item.get("session_id"),
             date=item.get("date", ""),
         )
@@ -160,26 +163,33 @@ def migrate_hpqa_dir(
     """
     storage.create_graph(graph_id)
     stats = {"episodic": 0, "semantic": 0, "tag": 0, "subgoal": 0, "procedural": 0}
+    batch_size = 500
 
     # Episodic
     epis_dir = os.path.join(dir_path, "episodic_memory")
     if os.path.isdir(epis_dir):
+        batch = []
         for fpath in sorted(glob.glob(os.path.join(epis_dir, "episodic_memory_*.json"))):
             item = _load_json(fpath)
             epis_id = item.get("episodic_id", stats["episodic"])
             observation = item.get("observation", item.get("episodic_memory", ""))
-            storage.add_episodic(
-                graph_id,
-                episodic_id=epis_id,
-                observation=observation,
-                action=item.get("action", ""),
-                time=str(item.get("time", "")),
-            )
+            batch.append({
+                "episodic_id": epis_id,
+                "observation": observation,
+                "action": item.get("action", ""),
+                "time": str(item.get("time", "")),
+            })
             stats["episodic"] += 1
+            if len(batch) >= batch_size:
+                storage.add_episodic_batch(graph_id, batch)
+                batch.clear()
+        if batch:
+            storage.add_episodic_batch(graph_id, batch)
 
     # Semantic
     sem_dir = os.path.join(dir_path, "semantic_memory")
     if os.path.isdir(sem_dir):
+        batch = []
         for fpath in sorted(glob.glob(os.path.join(sem_dir, "semantic_memory_*.json"))):
             item = _load_json(fpath)
             sem_id = item.get("semantic_id", stats["semantic"])
@@ -187,24 +197,29 @@ def migrate_hpqa_dir(
             embedding = _to_float_list(item.get("semantic_embedding"))
             if embedding is None and text:
                 embedding = embedder.embed(text)
-            storage.add_semantic(
-                graph_id,
-                semantic_id=sem_id,
-                text=text,
-                embedding=embedding,
-                tags=item.get("tags", []),
-                tag_ids=item.get("tag_ids", []),
-                time=item.get("time", 0),
-                is_active=item.get("is_active", True),
-                episodic_ids=item.get("episodic_ids", []),
-                bro_semantic_ids=item.get("bro_semantic_ids", []),
-                son_semantic_ids=item.get("son_semantic_ids", []),
-            )
+            batch.append({
+                "semantic_id": sem_id,
+                "text": text,
+                "embedding": embedding,
+                "tags": item.get("tags", []),
+                "tag_ids": item.get("tag_ids", []),
+                "time": item.get("time", 0),
+                "is_active": item.get("is_active", True),
+                "episodic_ids": item.get("episodic_ids", [item["episodic_id"]] if "episodic_id" in item else []),
+                "bro_semantic_ids": item.get("bro_semantic_ids", []),
+                "son_semantic_ids": item.get("son_semantic_ids", []),
+            })
             stats["semantic"] += 1
+            if len(batch) >= batch_size:
+                storage.add_semantic_batch(graph_id, batch)
+                batch.clear()
+        if batch:
+            storage.add_semantic_batch(graph_id, batch)
 
     # Tags
     tag_dir = os.path.join(dir_path, "tag")
     if os.path.isdir(tag_dir):
+        batch = []
         for fpath in sorted(glob.glob(os.path.join(tag_dir, "tag_*.json"))):
             item = _load_json(fpath)
             tag_id = item.get("tag_id", stats["tag"])
@@ -212,20 +227,25 @@ def migrate_hpqa_dir(
             embedding = _to_float_list(item.get("tag_embedding"))
             if embedding is None and tag_text:
                 embedding = embedder.embed(tag_text)
-            storage.add_tag(
-                graph_id,
-                tag_id=tag_id,
-                tag=tag_text,
-                embedding=embedding,
-                semantic_ids=item.get("semantic_ids", []),
-                time=item.get("time", 0),
-                importance=item.get("importance", 1),
-            )
+            batch.append({
+                "tag_id": tag_id,
+                "tag": tag_text,
+                "embedding": embedding,
+                "semantic_ids": item.get("semantic_ids", []),
+                "time": item.get("time", 0),
+                "importance": item.get("importance", 1),
+            })
             stats["tag"] += 1
+            if len(batch) >= batch_size:
+                storage.add_tag_batch(graph_id, batch)
+                batch.clear()
+        if batch:
+            storage.add_tag_batch(graph_id, batch)
 
     # Subgoals
     sg_dir = os.path.join(dir_path, "subgoal")
     if os.path.isdir(sg_dir):
+        batch = []
         for fpath in sorted(glob.glob(os.path.join(sg_dir, "subgoal_*.json"))):
             item = _load_json(fpath)
             sg_id = item.get("subgoal_id", stats["subgoal"])
@@ -233,19 +253,24 @@ def migrate_hpqa_dir(
             embedding = _to_float_list(item.get("subgoal_embedding"))
             if embedding is None and subgoal_text:
                 embedding = embedder.embed(subgoal_text)
-            storage.add_subgoal(
-                graph_id,
-                subgoal_id=sg_id,
-                subgoal=subgoal_text,
-                embedding=embedding,
-                procedural_ids=item.get("procedural_ids", []),
-                time=item.get("time", 0),
-            )
+            batch.append({
+                "subgoal_id": sg_id,
+                "subgoal": subgoal_text,
+                "embedding": embedding,
+                "procedural_ids": item.get("procedural_ids", []),
+                "time": item.get("time", 0),
+            })
             stats["subgoal"] += 1
+            if len(batch) >= batch_size:
+                storage.add_subgoal_batch(graph_id, batch)
+                batch.clear()
+        if batch:
+            storage.add_subgoal_batch(graph_id, batch)
 
     # Procedural
     proc_dir = os.path.join(dir_path, "procedural_memory")
     if os.path.isdir(proc_dir):
+        batch = []
         for fpath in sorted(glob.glob(os.path.join(proc_dir, "procedural_memory_*.json"))):
             item = _load_json(fpath)
             proc_id = item.get("procedural_id", stats["procedural"])
@@ -253,18 +278,22 @@ def migrate_hpqa_dir(
             embedding = _to_float_list(item.get("procedural_embedding"))
             if embedding is None and text:
                 embedding = embedder.embed(text)
-            storage.add_procedural(
-                graph_id,
-                procedural_id=proc_id,
-                text=text,
-                embedding=embedding,
-                subgoal=item.get("subgoal", ""),
-                subgoal_id=item.get("subgoal_id"),
-                episodic_ids=item.get("episodic_ids", []),
-                time=item.get("time", 0),
-                return_value=float(item.get("return", 0.0)),
-            )
+            batch.append({
+                "procedural_id": proc_id,
+                "text": text,
+                "embedding": embedding,
+                "subgoal": item.get("subgoal", ""),
+                "subgoal_id": item.get("subgoal_id"),
+                "episodic_ids": item.get("episodic_ids", [item["episodic_id"]] if "episodic_id" in item else []),
+                "time": item.get("time", 0),
+                "return_value": float(item.get("return", 0.0)),
+            })
             stats["procedural"] += 1
+            if len(batch) >= batch_size:
+                storage.add_procedural_batch(graph_id, batch)
+                batch.clear()
+        if batch:
+            storage.add_procedural_batch(graph_id, batch)
 
     logger.info("Migrated HPQA dir %s -> graph %s: %s", dir_path, graph_id, stats)
     return stats
@@ -324,7 +353,7 @@ def migrate_webarena_dir(
                 embedding=embedding,
                 tags=tags,
                 time=item.get("time", 0),
-                episodic_ids=item.get("episodic_ids", []),
+                episodic_ids=item.get("episodic_ids", [item["episodic_id"]] if "episodic_id" in item else []),
                 bro_semantic_ids=item.get("bro_semantic_ids", []),
             )
             stats["semantic"] += 1
@@ -364,7 +393,7 @@ def migrate_webarena_dir(
                 embedding=embedding,
                 subgoal=item.get("subgoal", ""),
                 subgoal_id=item.get("subgoal_id"),
-                episodic_ids=item.get("episodic_ids", []),
+                episodic_ids=item.get("episodic_ids", [item["episodic_id"]] if "episodic_id" in item else []),
                 time=item.get("time", 0),
                 return_value=float(item.get("return", 0.0)),
             )
@@ -372,3 +401,41 @@ def migrate_webarena_dir(
 
     logger.info("Migrated WebArena dir %s -> graph %s: %s", dir_path, graph_id, stats)
     return stats
+
+
+if __name__ == "__main__":
+    import argparse
+    import sys
+    from plugmem.api.dependencies import get_graph_manager
+
+    # Configure logging
+    logging.basicConfig(level=logging.INFO, format="[%(asctime)s] %(levelname)s: %(message)s")
+
+    parser = argparse.ArgumentParser(description="Migrate existing memory graphs to ChromaDB server.")
+    parser.add_argument("--format", required=True, choices=["hpqa", "longmemeval", "webarena"], help="Source format to migrate from.")
+    parser.add_argument("--path", required=True, help="Path to the JSON file or directory containing the graph nodes.")
+    parser.add_argument("--graph_id", default="default", help="Graph ID to register under in the server.")
+
+    args = parser.parse_args()
+
+    try:
+        manager = get_graph_manager()
+        storage = manager.storage
+        embedder = manager.embedder
+
+        if args.format == "hpqa":
+            stats = migrate_hpqa_dir(args.path, args.graph_id, storage, embedder)
+        elif args.format == "longmemeval":
+            stats = migrate_longmemeval(args.path, args.graph_id, storage, embedder)
+        elif args.format == "webarena":
+            stats = migrate_webarena_dir(args.path, args.graph_id, storage, embedder)
+        else:
+            print(f"Error: Unknown format '{args.format}'", file=sys.stderr)
+            sys.exit(1)
+
+        print(f"Migration completed successfully under graph_id='{args.graph_id}'. Stats: {stats}")
+    except Exception as e:
+        print(f"Migration failed: {e}", file=sys.stderr)
+        import traceback
+        traceback.print_exc()
+        sys.exit(1)

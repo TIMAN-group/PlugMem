@@ -90,13 +90,20 @@ class OpenAICompatibleLLMClient(LLMClient):
         self.token_usage_file = token_usage_file
 
         if is_azure:
-            self._client = AzureOpenAI(
-                azure_endpoint=base_url,
-                api_key=api_key,
-                api_version=azure_api_version,
-            )
+            urls = [u.strip() for u in base_url.split(",") if u.strip()]
+            self._clients = [
+                AzureOpenAI(
+                    azure_endpoint=url,
+                    api_key=api_key,
+                    api_version=azure_api_version,
+                ) for url in urls
+            ]
         else:
-            self._client = OpenAI(base_url=base_url, api_key=api_key)
+            urls = [u.strip() for u in base_url.split(",") if u.strip()]
+            self._clients = [OpenAI(base_url=url, api_key=api_key) for url in urls]
+            
+        import itertools
+        self._client_cycle = itertools.cycle(self._clients)
 
     def complete(
         self,
@@ -107,14 +114,32 @@ class OpenAICompatibleLLMClient(LLMClient):
     ) -> str:
         for attempt in range(1, self.max_retries + 1):
             try:
-                response = self._client.chat.completions.create(
+                start_time = time.perf_counter()
+                client = next(self._client_cycle)
+                response = client.chat.completions.create(
                     model=self.model,
                     messages=messages,
                     temperature=temperature,
                     top_p=top_p,
                     max_tokens=max_tokens,
                 )
+                latency = time.perf_counter() - start_time
                 self._log_usage(response, messages)
+                
+                # Capture LLM call stats if request context is active
+                from plugmem.api.logging_ctx import current_log_ctx
+                ctx = current_log_ctx.get()
+                if ctx is not None:
+                    usage = getattr(response, "usage", None)
+                    p_tok = getattr(usage, "prompt_tokens", 0) if usage else 0
+                    c_tok = getattr(usage, "completion_tokens", 0) if usage else 0
+                    ctx.record_llm_call(
+                        model=self.model,
+                        prompt_tokens=p_tok,
+                        completion_tokens=c_tok,
+                        latency_sec=latency,
+                    )
+
                 content = response.choices[0].message.content
                 return content.strip() if content else ""
 

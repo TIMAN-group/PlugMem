@@ -49,6 +49,14 @@ class TrajectoryStep(BaseModel):
 class SemanticMemoryInput(BaseModel):
     semantic_memory: str
     tags: List[str] = Field(default_factory=list)
+    embedding: Optional[List[float]] = Field(
+        None,
+        description="Pre-computed embedding vector. If provided, the server skips re-embedding.",
+    )
+    tag_embeddings: Optional[List[List[float]]] = Field(
+        None,
+        description="Pre-computed tag embedding vectors, one per tag.",
+    )
     source: Optional[MemorySource] = None
     confidence: float = Field(0.5, ge=0.0, le=1.0)
 
@@ -57,6 +65,10 @@ class ProceduralMemoryInput(BaseModel):
     subgoal: str
     procedural_memory: str
     return_value: float = Field(0.0, alias="return")
+    subgoal_embedding: Optional[List[float]] = Field(
+        None,
+        description="Pre-computed subgoal embedding. If provided, the server skips re-embedding.",
+    )
     source: Optional[MemorySource] = None
     confidence: float = Field(0.5, ge=0.0, le=1.0)
 
@@ -95,6 +107,12 @@ class MemoryInsertRequest(BaseModel):
     semantic: Optional[List[SemanticMemoryInput]] = None
     procedural: Optional[List[ProceduralMemoryInput]] = None
 
+    tag_equal_threshold: Optional[float] = None
+    semantic_equal_threshold: Optional[float] = None
+    procedural_equal_threshold: Optional[float] = None
+    subgoal_equal_threshold: Optional[float] = None
+
+
 
 class MemoryInsertResponse(BaseModel):
     status: str = "ok"
@@ -115,8 +133,9 @@ class RetrieveRequest(BaseModel):
     mode: Optional[str] = Field(
         None,
         description=(
-            'null (auto-detect), "semantic_memory", '
-            '"episodic_memory", or "procedural_memory"'
+            'Optional override. Omit/null (default) and PlugMem selects the '
+            'memory type. Set explicitly only to force "semantic_memory", '
+            '"episodic_memory", or "procedural_memory".'
         ),
     )
     min_confidence: Optional[float] = Field(
@@ -128,10 +147,21 @@ class RetrieveRequest(BaseModel):
     source_in: Optional[List[MemorySource]] = Field(
         None,
         description="Restrict recall to memories whose source is in this list.",
+    )
     session_id: Optional[str] = Field(
         None,
         description="If set, the recall is logged against this session id.",
     )
+    tag_k: Optional[int] = None
+    tag_threshold: Optional[float] = None
+    semantic_k: Optional[int] = None
+    semantic_threshold: Optional[float] = None
+    subgoal_k: Optional[int] = None
+    subgoal_threshold: Optional[float] = None
+    procedural_k: Optional[int] = None
+    procedural_threshold: Optional[float] = None
+    episodic_k: Optional[int] = None
+    episodic_threshold: Optional[float] = None
 
 
 class RetrieveResponse(BaseModel):
@@ -147,13 +177,29 @@ class ReasonRequest(BaseModel):
     state: Optional[str] = None
     task_type: str = ""
     time: str = ""
-    mode: Optional[str] = None
+    mode: Optional[str] = Field(
+        None,
+        description=(
+            'Optional override. Omit/null (default) and PlugMem selects the '
+            'memory type. Set explicitly only to force a specific type.'
+        ),
+    )
     min_confidence: Optional[float] = Field(None, ge=0.0, le=1.0)
     source_in: Optional[List[MemorySource]] = None
     session_id: Optional[str] = Field(
         None,
         description="If set, the reasoning recall is logged against this session id.",
     )
+    tag_k: Optional[int] = None
+    tag_threshold: Optional[float] = None
+    semantic_k: Optional[int] = None
+    semantic_threshold: Optional[float] = None
+    subgoal_k: Optional[int] = None
+    subgoal_threshold: Optional[float] = None
+    procedural_k: Optional[int] = None
+    procedural_threshold: Optional[float] = None
+    episodic_k: Optional[int] = None
+    episodic_threshold: Optional[float] = None
 
 
 class ReasonResponse(BaseModel):
@@ -210,8 +256,6 @@ class ExtractedMemory(BaseModel):
 
 class ExtractResponse(BaseModel):
     memories: List[ExtractedMemory] = Field(default_factory=list)
-
-
 # ------------------------------------------------------------------ #
 # Stats / Nodes
 # ------------------------------------------------------------------ #

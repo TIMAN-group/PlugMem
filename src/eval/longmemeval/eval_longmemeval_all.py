@@ -9,11 +9,18 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 parent_dir = os.path.abspath(os.path.join(current_dir, "../.."))
 # 添加到 sys.path
 sys.path.append(parent_dir)
+sys.path.append(current_dir)
 from memory_structuring.memory import Memory
-from memory_retrieving.memory_graph import MemoryGraph
+from plugmem_client import PlugMemClient as MemoryGraph
 from memory_retrieving.value_longmemeval import TagEqual, TagRelevant, SemanticEqual, SemanticRelevant, SubgoalEqual, SubgoalRelevant, ProceduralEqual, ProceduralRelevant
 from utils import wrapper_call_model,load_json,dump_json
 from utils import DEFAULT_LLM_NAME, DEFAULT_EMBEDDING_MODEL_NAME
+import argparse
+parser = argparse.ArgumentParser()
+parser.add_argument("--update_merge_first", action="store_true")
+parser.add_argument("--sem_merge_threshold", type=float, default=0.5)
+parser.add_argument("--max_qa_items", type=int, default=500)
+args = parser.parse_args()
 
 def load_run_prompt() -> str:
     with open("longmemeval_run_prompt.txt", "r") as f:
@@ -26,6 +33,8 @@ print("Loading done")
 
 
 def _build_memory_from_session(session, time):
+    if not session:
+        return None
     goal = "Answer user's question"
     if session[0]['role'] == 'user':
         memory = Memory(goal=goal, observation=session[0]["content"], time = f"Date: {time}")
@@ -52,7 +61,7 @@ def _build_memory_from_session(session, time):
 worker_count = int(os.getenv("LONGMEMEVAL_SESSION_WORKERS", max(os.cpu_count() or 1, 1)))
 cnt = 0
 
-for n in range(500):
+for n in range(args.max_qa_items):
     print(n)
     test = data[n]
     question_id = test["question_id"]
@@ -73,11 +82,14 @@ for n in range(500):
     print(f"Loading test {question_id} with {len(sessions)} sessions using {worker_count} workers")
     with ThreadPoolExecutor(max_workers=worker_count) as executor:
         memories = list(executor.map(_build_memory_from_session, sessions, times))
+    memories = [m for m in memories if m is not None]
     print("Memory OK")
     for memory in memories:
         mg.insert(memory)#5
     print("MG OK")
     print("Finish Loading Session")
+    if args.update_merge_first:
+        mg.update_semantic_subgraph(merge_threshold=args.sem_merge_threshold, write_to_disk=False)
     goal = "Answer user's question"
     with open("../../../data_longmemeval/retrieve.json", "a",) as input:
         _json = {

@@ -66,3 +66,35 @@ def test_browse_nodes_invalid_type(client):
     client.post("/api/v1/graphs", json={"graph_id": "browse2"})
     resp = client.get("/api/v1/graphs/browse2/nodes?node_type=invalid")
     assert resp.status_code == 400
+
+
+def test_browse_nodes_with_data(client):
+    # Create graph and insert semantic and procedural memories
+    client.post("/api/v1/graphs", json={"graph_id": "browse_data"})
+    resp = client.post("/api/v1/graphs/browse_data/memories", json={
+        "mode": "structured",
+        "semantic": [
+            {"semantic_memory": "Madrid is the capital of Spain.", "tags": ["Spain", "Madrid"]},
+        ],
+        "procedural": [
+            {"subgoal": "Locate capital", "procedural_memory": "Query world map", "return_value": 1.0},
+        ],
+    })
+    assert resp.status_code == 200
+
+    # Browse semantic nodes
+    resp = client.get("/api/v1/graphs/browse_data/nodes?node_type=semantic")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["count"] == 1
+    assert data["nodes"][0]["semantic_memory"] == "Madrid is the capital of Spain."
+    assert data["nodes"][0]["credibility"] == 10
+
+    # Browse procedural nodes
+    resp = client.get("/api/v1/graphs/browse_data/nodes?node_type=procedural")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["count"] == 1
+    assert data["nodes"][0]["procedural_memory"] == "Query world map"
+    assert data["nodes"][0]["subgoal"] == "Locate capital"
+

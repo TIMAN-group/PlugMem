@@ -155,7 +155,7 @@ mkdir -p "$DIR_PATH/episodic_memory" \
    cd src/eval/longmemeval
    python eval_longmemeval_all.py
    ```
-   ### HotpotQA(HippoRAG 2)
+   ### HotpotQA
    ```bash
    cd src/eval/hotpotqa
    # It may take several hours to structure memory for hotpotqa_corpus.json.

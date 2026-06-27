@@ -48,6 +48,27 @@ from plugmem.storage.chroma import ChromaStorage, _deserialize_list
 
 logger = logging.getLogger(__name__)
 
+# The memory types PlugMem can retrieve. Type selection is PlugMem's job
+# (via get_mode); a request may override it, but only with one of these.
+_VALID_MODES = ("semantic_memory", "episodic_memory", "procedural_memory")
+
+
+def _normalize_mode(mode: Any, default: str = "semantic_memory") -> str:
+    """Coerce a mode value to one of _VALID_MODES.
+
+    Strips stray markdown the planner LLM sometimes emits (``#``/``*``) and
+    validates the result. An unrecognized value falls back to ``default``
+    with a warning rather than silently degrading or raising deep in the
+    retrieval branches.
+    """
+    if not isinstance(mode, str):
+        return default
+    m = mode.replace("#", "").replace("*", "").strip()
+    if m not in _VALID_MODES:
+        logger.warning("Unrecognized retrieval mode %r; falling back to %s", mode, default)
+        return default
+    return m
+
 
 def _passes_metadata_filter(
     node,
@@ -212,6 +233,8 @@ class MemoryGraph:
                 confidence=float(meta.get("confidence", 0.5)),
             )
             node.tags = _deserialize_list(meta.get("tags", "[]"))
+            node._temp_episodic_ids = _deserialize_list(meta.get("episodic_ids", "[]"))
+            node._temp_bro_ids = _deserialize_list(meta.get("bro_semantic_ids", "[]"))
             self.semantic_nodes.append(node)
             self.semantic_time = max(self.semantic_time, _time + 1)
 
@@ -228,6 +251,7 @@ class MemoryGraph:
                 time=meta.get("time", 0),
                 importance=meta.get("importance", 1),
             )
+            node._temp_semantic_ids = _deserialize_list(meta.get("semantic_ids", "[]"))
             self.tag_nodes.append(node)
 
     def _load_subgoal_nodes(self) -> None:
@@ -242,6 +266,7 @@ class MemoryGraph:
                 embedding=emb,
                 time=meta.get("time", 0),
             )
+            node._temp_procedural_ids = _deserialize_list(meta.get("procedural_ids", "[]"))
             self.subgoal_nodes.append(node)
 
     def _load_procedural_nodes(self) -> None:
@@ -260,6 +285,7 @@ class MemoryGraph:
                 confidence=float(meta.get("confidence", 0.5)),
                 session_id=meta.get("session_id"),
             )
+            node._temp_episodic_ids = _deserialize_list(meta.get("episodic_ids", "[]"))
             self.procedural_nodes.append(node)
             self.procedural_time = max(self.procedural_time, node.time + 1)
 
@@ -278,34 +304,37 @@ class MemoryGraph:
         epis_id2node = self.episodic_id2node
 
         # Link semantic -> episodic
-        sem_data = self.storage.get_all_semantic(self.graph_id)
-        for meta, sem_node in zip(sem_data.get("metadatas", []), self.semantic_nodes):
-            episodic_ids = _deserialize_list(meta.get("episodic_ids", "[]"))
+        for sem_node in self.semantic_nodes:
+            episodic_ids = getattr(sem_node, "_temp_episodic_ids", [])
             for eid in episodic_ids:
                 epis_node = epis_id2node.get(eid)
                 if epis_node is not None:
                     sem_node.episodic_nodes.append(epis_node)
-            bro_ids = _deserialize_list(meta.get("bro_semantic_ids", "[]"))
+            bro_ids = getattr(sem_node, "_temp_bro_ids", [])
             for bid in bro_ids:
                 bro_node = sem_id2node.get(bid)
                 if bro_node is not None:
                     sem_node.bro_semantic_nodes.append(bro_node)
+            if hasattr(sem_node, "_temp_episodic_ids"):
+                delattr(sem_node, "_temp_episodic_ids")
+            if hasattr(sem_node, "_temp_bro_ids"):
+                delattr(sem_node, "_temp_bro_ids")
 
         # Link tags <-> semantics
-        tag_data = self.storage.get_all_tags(self.graph_id)
-        for meta, tag_node in zip(tag_data.get("metadatas", []), self.tag_nodes):
-            semantic_ids = _deserialize_list(meta.get("semantic_ids", "[]"))
+        for tag_node in self.tag_nodes:
+            semantic_ids = getattr(tag_node, "_temp_semantic_ids", [])
             for sid in semantic_ids:
                 sem_node = sem_id2node.get(sid)
                 if sem_node is not None:
                     tag_node.semantic_nodes.append(sem_node)
                     if tag_node not in sem_node.tag_nodes:
                         sem_node.tag_nodes.append(tag_node)
+            if hasattr(tag_node, "_temp_semantic_ids"):
+                delattr(tag_node, "_temp_semantic_ids")
 
         # Link subgoals -> procedurals
-        sg_data = self.storage.get_all_subgoals(self.graph_id)
-        for meta, sg_node in zip(sg_data.get("metadatas", []), self.subgoal_nodes):
-            proc_ids = _deserialize_list(meta.get("procedural_ids", "[]"))
+        for sg_node in self.subgoal_nodes:
+            proc_ids = getattr(sg_node, "_temp_procedural_ids", [])
             for pid in proc_ids:
                 proc_node = self.procedural_id2node.get(pid)
                 if proc_node is not None:
@@ -314,15 +343,18 @@ class MemoryGraph:
                         proc_node.subgoal_nodes.append(sg_node)
             if sg_node.procedural_nodes:
                 sg_node.activate = True
+            if hasattr(sg_node, "_temp_procedural_ids"):
+                delattr(sg_node, "_temp_procedural_ids")
 
         # Link procedurals -> episodics
-        proc_data = self.storage.get_all_procedural(self.graph_id)
-        for meta, proc_node in zip(proc_data.get("metadatas", []), self.procedural_nodes):
-            episodic_ids = _deserialize_list(meta.get("episodic_ids", "[]"))
+        for proc_node in self.procedural_nodes:
+            episodic_ids = getattr(proc_node, "_temp_episodic_ids", [])
             for eid in episodic_ids:
                 epis_node = epis_id2node.get(eid)
                 if epis_node is not None:
                     proc_node.episodic_nodes.append(epis_node)
+            if hasattr(proc_node, "_temp_episodic_ids"):
+                delattr(proc_node, "_temp_episodic_ids")
 
     # ------------------------------------------------------------------ #
     # Unified insert
@@ -357,6 +389,7 @@ class MemoryGraph:
                     reward=step.get("reward", "") if isinstance(step, dict) else "",
                 )
                 self.episodic_nodes.append(epis_node)
+                self.episodic_id2node[epis_id] = epis_node
                 episodic_nodes[i].append(epis_node)
                 if sid is not None:
                     self.session_ids.setdefault(sid, []).append(epis_node)
@@ -437,6 +470,7 @@ class MemoryGraph:
 
             sem_node.tags = list(set(sem_node.tags))
             self.semantic_nodes.append(sem_node)
+            self.semantic_id2node[sem_id] = sem_node
             curr_sem_nodes.append(sem_node)
             self.semantic_time += 1
 
@@ -517,6 +551,7 @@ class MemoryGraph:
             proc_node.subgoal_nodes.append(subgoal_node)
             proc_node.subgoals.append(subgoal_node.subgoal)
             self.procedural_nodes.append(proc_node)
+            self.procedural_id2node[proc_id] = proc_node
 
             # Persist
             sg_emb = subgoal_node.embedding
@@ -776,6 +811,8 @@ class MemoryGraph:
         semantic_memory: dict,
         semantic_memory_embedding=None,
         value_func: ValueBase = None,
+        min_confidence: Optional[float] = None,
+        source_in: Optional[List[str]] = None,
     ) -> List[SemanticNode]:
         if semantic_memory_embedding is None:
             semantic_memory_embedding = {
@@ -785,6 +822,8 @@ class MemoryGraph:
         embedding = semantic_memory_embedding["semantic_memory"]
         values = []
         for sem_node in self.semantic_nodes:
+            if not _passes_metadata_filter(sem_node, min_confidence, source_in):
+                continue
             relevance = get_similarity(embedding, sem_node.embedding)
             recency = (self.semantic_time - sem_node.time) if isinstance(sem_node.time, int) else 0
             value = value_func.evaluate(
@@ -805,10 +844,18 @@ class MemoryGraph:
                 result.append(node)
         return result
 
-    def retrieve_episodic_nodes(self, observation: str) -> str:
+    def retrieve_episodic_nodes(
+        self, 
+        observation: str,
+        value_func: Optional[ValueBase] = None,
+        min_confidence: Optional[float] = None,
+        source_in: Optional[List[str]] = None,
+    ) -> str:
         semantic_nodes = self.retrieve_semantic_nodes_wo_tag(
             semantic_memory={"semantic_memory": observation},
-            value_func=self.semantic_relevant4episodic,
+            value_func=value_func if value_func is not None else self.semantic_relevant4episodic,
+            min_confidence=min_confidence,
+            source_in=source_in,
         )
         semantic_nodes = semantic_nodes[:30]
 
@@ -947,22 +994,33 @@ class MemoryGraph:
         time: str = "",
         task_type: str = "",
         mode: str = None,
+        tag_relevant: Optional[ValueBase] = None,
+        semantic_relevant: Optional[ValueBase] = None,
+        procedural_relevant: Optional[ValueBase] = None,
+        subgoal_relevant: Optional[ValueBase] = None,
         min_confidence: Optional[float] = None,
         source_in: Optional[List[str]] = None,
         _audit: Optional[Dict[str, Any]] = None,
     ) -> Tuple[List[Dict[str, str]], Dict[str, Any], str]:
-        next_subgoal, query_tags = get_plan(
-            self.retrieval_llm, goal=goal, subgoal=subgoal, state=state, observation=observation,
-            prompts=self.prompts, graph_id=self.graph_id,
-        )
-        logger.info("query_tags: %s", query_tags)
+        import time as time_mod
+        start_time = time_mod.perf_counter()
 
+        # PlugMem decides the memory type unless the caller explicitly
+        # overrides it. Type selection and planning are independent: the
+        # planner (tags + next subgoal) runs regardless of who chose the mode.
         if mode is None:
             mode = get_mode(
                 self.retrieval_llm, observation=observation, task_type=task_type,
                 prompts=self.prompts, graph_id=self.graph_id,
             )
+        mode = _normalize_mode(mode)
         logger.info("mode: %s", mode)
+
+        next_subgoal, query_tags = get_plan(
+            self.retrieval_llm, goal=goal, subgoal=subgoal, state=state, observation=observation,
+            prompts=self.prompts, graph_id=self.graph_id,
+        )
+        logger.info("query_tags: %s", query_tags)
 
         _reasoning_map = {
             "episodic_memory": ("reasoning_episodic", DefaultEpisodicPrompt),
@@ -979,16 +1037,16 @@ class MemoryGraph:
         if mode in ["semantic_memory", "episodic_memory"]:
             semantic_nodes = self.retrieve_semantic_nodes(
                 semantic_memory={"semantic_memory": observation, "tags": query_tags},
-                value_func_tag=self.tag_relevant,
-                value_func=self.semantic_relevant,
+                value_func_tag=tag_relevant if tag_relevant is not None else self.tag_relevant,
+                value_func=semantic_relevant if semantic_relevant is not None else self.semantic_relevant,
                 min_confidence=min_confidence,
                 source_in=source_in,
             )
         if mode in ["procedural_memory", "episodic_memory"]:
             procedural_nodes = self.retrieve_procedural_nodes(
                 subgoal=next_subgoal,
-                value_func_subgoal=self.subgoal_relevant,
-                value_func=self.procedural_relevant,
+                value_func_subgoal=subgoal_relevant if subgoal_relevant is not None else self.subgoal_relevant,
+                value_func=procedural_relevant if procedural_relevant is not None else self.procedural_relevant,
                 min_confidence=min_confidence,
                 source_in=source_in,
             )
@@ -998,19 +1056,23 @@ class MemoryGraph:
         episodic_memory_str = ""
 
         if mode == "episodic_memory":
-            episodic_memory_str = self.retrieve_episodic_nodes(observation=observation)
+            episodic_memory_str = self.retrieve_episodic_nodes(
+                observation=observation,
+                min_confidence=min_confidence,
+                source_in=source_in,
+            )
         elif mode == "semantic_memory":
             if not semantic_nodes:
                 semantic_memory_str = "No relevant fact"
             else:
                 for i, sn in enumerate(semantic_nodes):
-                    semantic_memory_str += f"Fact {i}: {sn.get_semantic_memory()}\n"
+                    semantic_memory_str += f"Fact {i} (Sem Node {sn.semantic_id}): {sn.get_semantic_memory()}\n"
         elif mode == "procedural_memory":
             if not procedural_nodes:
                 procedural_memory_str = "No relevant experiences"
             else:
                 for i, pn in enumerate(procedural_nodes):
-                    procedural_memory_str += f"Experience {i}: {pn.get_procedural_memory()}\n"
+                    procedural_memory_str += f"Experience {i} (Proc Node {pn.procedural_id}): {pn.get_procedural_memory()}\n"
         else:
             raise ValueError(f"Invalid mode: {mode}")
 
@@ -1035,6 +1097,14 @@ class MemoryGraph:
             _audit["selected_semantic_ids"] = [n.semantic_id for n in semantic_nodes]
             _audit["selected_procedural_ids"] = [n.procedural_id for n in procedural_nodes]
 
+        # Record latency and memory retrieved
+        latency = time_mod.perf_counter() - start_time
+        from plugmem.api.logging_ctx import current_log_ctx
+        ctx = current_log_ctx.get()
+        if ctx is not None:
+            retrieved_mem = variables.get(mode, "")
+            ctx.record_retrieval(mode=mode, latency_sec=latency, retrieved_mem=retrieved_mem)
+
         return messages, variables, mode
 
     def retrieve_with_trace(
@@ -1049,6 +1119,13 @@ class MemoryGraph:
         query_tags: Optional[List[str]] = None,
         next_subgoal: Optional[str] = None,
         auto_plan: bool = False,
+        min_confidence: Optional[float] = None,
+        source_in: Optional[List[str]] = None,
+        tag_relevant: Optional[ValueBase] = None,
+        semantic_relevant: Optional[ValueBase] = None,
+        procedural_relevant: Optional[ValueBase] = None,
+        subgoal_relevant: Optional[ValueBase] = None,
+        semantic_relevant4episodic: Optional[ValueBase] = None,
     ) -> Dict[str, Any]:
         """Run the retrieval pipeline with full instrumentation.
 
@@ -1074,6 +1151,7 @@ class MemoryGraph:
                 plan_source["mode"] = "default"
         else:
             plan_source["mode"] = "override"
+        mode = _normalize_mode(mode)
 
         if (query_tags is None or next_subgoal is None) and auto_plan:
             llm_subgoal, llm_tags = get_plan(
@@ -1108,15 +1186,19 @@ class MemoryGraph:
         if mode in ("semantic_memory", "episodic_memory"):
             semantic_nodes = self.retrieve_semantic_nodes(
                 semantic_memory={"semantic_memory": observation, "tags": query_tags},
-                value_func_tag=self.tag_relevant,
-                value_func=self.semantic_relevant,
+                value_func_tag=tag_relevant if tag_relevant is not None else self.tag_relevant,
+                value_func=semantic_relevant if semantic_relevant is not None else self.semantic_relevant,
+                min_confidence=min_confidence,
+                source_in=source_in,
                 _trace=sem_trace,
             )
         if mode in ("procedural_memory", "episodic_memory"):
             procedural_nodes = self.retrieve_procedural_nodes(
                 subgoal=next_subgoal,
-                value_func_subgoal=self.subgoal_relevant,
-                value_func=self.procedural_relevant,
+                value_func_subgoal=subgoal_relevant if subgoal_relevant is not None else self.subgoal_relevant,
+                value_func=procedural_relevant if procedural_relevant is not None else self.procedural_relevant,
+                min_confidence=min_confidence,
+                source_in=source_in,
                 _trace=proc_trace,
             )
 
@@ -1126,13 +1208,18 @@ class MemoryGraph:
         episodic_memory_str = ""
 
         if mode == "episodic_memory":
-            episodic_memory_str = self.retrieve_episodic_nodes(observation=observation)
+            episodic_memory_str = self.retrieve_episodic_nodes(
+                observation=observation,
+                value_func=semantic_relevant4episodic,
+                min_confidence=min_confidence,
+                source_in=source_in,
+            )
         elif mode == "semantic_memory":
             if not semantic_nodes:
                 semantic_memory_str = "No relevant fact"
             else:
                 semantic_memory_str = "".join(
-                    f"Fact {i}: {n.get_semantic_memory()}\n"
+                    f"Fact {i} (Sem Node {n.semantic_id}): {n.get_semantic_memory()}\n"
                     for i, n in enumerate(semantic_nodes)
                 )
         elif mode == "procedural_memory":
@@ -1140,7 +1227,7 @@ class MemoryGraph:
                 procedural_memory_str = "No relevant experiences"
             else:
                 procedural_memory_str = "".join(
-                    f"Experience {i}: {n.get_procedural_memory()}\n"
+                    f"Experience {i} (Proc Node {n.procedural_id}): {n.get_procedural_memory()}\n"
                     for i, n in enumerate(procedural_nodes)
                 )
 
@@ -1181,6 +1268,7 @@ class MemoryGraph:
                 "procedural_ids": [n.procedural_id for n in procedural_nodes],
             },
             "rendered_prompt": rendered_prompt,
+            "variables": variables,
         }
 
     def retrieve_and_reason(
@@ -1269,6 +1357,9 @@ class MemoryGraph:
         only_update_recent_window: Optional[int] = None,
         allow_merge_with_common_episodic_nodes: bool = False,
     ) -> Dict[str, int]:
+        import time as time_mod
+        start_time = time_mod.perf_counter()
+
         stats = {
             "scanned_semantic": 0,
             "skipped_inactive": 0,
@@ -1389,4 +1480,12 @@ class MemoryGraph:
                     break
 
         logger.info("Consolidation stats: %s", stats)
+
+        # Record consolidation stats to the active request context
+        latency = time_mod.perf_counter() - start_time
+        from plugmem.api.logging_ctx import current_log_ctx
+        ctx = current_log_ctx.get()
+        if ctx is not None:
+            ctx.record_consolidation(latency_sec=latency, stats=stats)
+
         return stats

@@ -16,13 +16,14 @@ parent_dir = os.path.abspath(os.path.join(current_dir, "../.."))
 sys.path.append(parent_dir)
 from utils import wrapper_call_model
 
+PROJECT_ROOT = os.path.abspath(os.path.join(current_dir, "../../.."))
 
-HOTPOTQA_QA_PATH="../../bench_data/hotpotqa_hipporag/hotpotqa.json"   
-HOTPOTQA_CORPUS_PATH="../../bench_data/hotpotqa_hipporag/hotpotqa_corpus.json"
-HOTPOTQA_TRACE_PATH="../../bench_data/hotpotqa_hipporag/hotpotqa_oas_traces.json"
-MUSIQUE_CORPUS_PATH="../../bench_data/hotpotqa_hipporag/musique_corpus.json"
-MUSIQUE_QA_PATH="../../bench_data/hotpotqa_hipporag/musique.json"
-MUSIQUE_TRACE_PATH="../../bench_data/hotpotqa_hipporag/musique_oas_traces.json"
+HOTPOTQA_QA_PATH=os.path.join(PROJECT_ROOT, "bench_data/hotpotqa_hipporag/hotpotqa.json")
+HOTPOTQA_CORPUS_PATH=os.path.join(PROJECT_ROOT, "bench_data/hotpotqa_hipporag/hotpotqa_corpus.json")
+HOTPOTQA_TRACE_PATH=os.path.join(PROJECT_ROOT, "bench_data/hotpotqa_hipporag/hotpotqa_oas_traces.json")
+MUSIQUE_CORPUS_PATH=os.path.join(PROJECT_ROOT, "bench_data/hotpotqa_hipporag/musique_corpus.json")
+MUSIQUE_QA_PATH=os.path.join(PROJECT_ROOT, "bench_data/hotpotqa_hipporag/musique.json")
+MUSIQUE_TRACE_PATH=os.path.join(PROJECT_ROOT, "bench_data/hotpotqa_hipporag/musique_oas_traces.json")
 TRACE_FIELDS_ORDER = ["observation", "action", "state", "reward", "subgoal"]
 
 HOTPOTQA_PREFIX = (

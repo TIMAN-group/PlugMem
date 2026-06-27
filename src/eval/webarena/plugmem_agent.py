@@ -6,7 +6,7 @@ from AgentOccam.AgentOccam import AgentOccam, PlanTreeNode, Actor
 from webagents_step.utils.data_prep import DotDict
 
 from memory_structuring.memory import Memory
-from memory_retrieving.memory_graph import MemoryGraph
+from plugmem_client import PlugMemClient as MemoryGraph
 from utils import call_gpt
 
 

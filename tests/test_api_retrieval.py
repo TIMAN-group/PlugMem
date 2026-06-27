@@ -38,6 +38,30 @@ def test_reason(client):
     assert len(data["reasoning"]) > 0
 
 
+def test_retrieve_auto_detects_mode_when_omitted(client):
+    """With no mode in the request, PlugMem selects the memory type."""
+    _seed_graph(client, "auto_mode")
+    resp = client.post("/api/v1/graphs/auto_mode/retrieve", json={
+        "observation": "What temperature does water boil?",
+    })
+    assert resp.status_code == 200
+    # PlugMem chose the type; with the fake planner this resolves to semantic_memory.
+    assert resp.json()["mode"] in (
+        "semantic_memory", "episodic_memory", "procedural_memory",
+    )
+
+
+def test_retrieve_normalizes_decorated_override_mode(client):
+    """A decorated explicit mode is normalized instead of silently degrading."""
+    _seed_graph(client, "decorated_mode")
+    resp = client.post("/api/v1/graphs/decorated_mode/retrieve", json={
+        "observation": "boiling point",
+        "mode": "**semantic_memory**",
+    })
+    assert resp.status_code == 200
+    assert resp.json()["mode"] == "semantic_memory"
+
+
 def test_retrieve_not_found(client):
     resp = client.post("/api/v1/graphs/nonexistent/retrieve", json={
         "observation": "test",
@@ -78,6 +102,25 @@ def test_retrieve_writes_audit_row(client):
     assert row["observation"] == "boiling point"
     assert row["mode"] == "semantic_memory"
     assert row["n_messages"] > 0
+
+
+def test_retrieve_audit_records_selected_ids(client):
+    """The recall audit captures the selected semantic ids from the trace
+    (regression: these were always empty after the retrieve_with_trace switch)."""
+    _seed_graph(client, "audit_selected")
+    resp = client.post("/api/v1/graphs/audit_selected/retrieve", json={
+        "observation": "boiling point of water",
+        "mode": "semantic_memory",
+        # Force matches under the fake embedder/planner.
+        "semantic_k": 5,
+        "semantic_threshold": -1.0,
+        "tag_threshold": -1.0,
+        "session_id": "run-sel",
+    })
+    assert resp.status_code == 200
+
+    row = client.get("/api/v1/graphs/audit_selected/recalls").json()["recalls"][0]
+    assert len(row["selected_semantic_ids"]) > 0
 
 
 def test_recalls_filter_by_session_id(client):

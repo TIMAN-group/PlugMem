@@ -122,7 +122,8 @@ export async function doRecall(
   try {
     response = await p.client.retrieve(p.graphId, {
       observation: p.observation,
-      mode: "semantic_memory",
+      // mode omitted: PlugMem decides the memory type. Pass mode explicitly
+      // only to force a specific type.
       ...(p.minConfidence !== undefined ? { min_confidence: p.minConfidence } : {}),
       ...(p.sourceIn ? { source_in: p.sourceIn } : {}),
     } as Parameters<typeof p.client.retrieve>[1]);
