@@ -123,7 +123,13 @@ export interface HealthResponse {
 
 // ── Promotion-gate extraction ───────────────────────────────────────
 
-export type CandidateKindWire = "failure_delta" | "correction" | "episodic";
+// Candidate kinds the server's /extract endpoint accepts on the wire.
+// MUST match plugmem/api/schemas.py:CandidateKind. The in-memory detector
+// vocabulary (promotion.ts:CandidateKind) is a SUPERSET — kinds without a
+// server insert path (e.g. "episodic") are filtered out before /extract,
+// because the endpoint validates the whole batch atomically and a single
+// unknown kind 422s every candidate in the request.
+export type CandidateKindWire = "failure_delta" | "correction";
 
 export interface CandidateWire {
   kind: CandidateKindWire;

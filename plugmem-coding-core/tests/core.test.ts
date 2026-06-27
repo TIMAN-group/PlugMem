@@ -251,6 +251,69 @@ describe("createCore — promotion gate at session_end", () => {
     expect(ins.procedural).toHaveLength(1);
   });
 
+  it("filters out episodic candidates before /extract (no batch poisoning)", async () => {
+    const { fn, calls } = makeFetchStub([
+      [
+        /\/api\/v1\/extract$/,
+        {
+          status: 200,
+          body: {
+            memories: [
+              {
+                type: "semantic",
+                semantic_memory: "use httpx",
+                tags: [],
+                source: "correction",
+                confidence: 0.9,
+              },
+            ],
+          },
+        },
+      ],
+      [/\/api\/v1\/graphs\/[^/]+$/, { status: 200, body: { graph_id: "x", stats: {} } }],
+      [/\/memories$/, { status: 200, body: { status: "ok", stats: {} } }],
+    ]);
+    globalThis.fetch = fn as unknown as typeof fetch;
+
+    const sessionState = new MapState();
+    // A correction (sendable) and a completion phrase (episodic — must be dropped).
+    await recordUserPrompt(sessionState, {
+      harness: "claude-code",
+      sessionId: "s",
+      cwd: "/tmp/repo",
+      prompt: "actually, use httpx",
+    });
+    await recordUserPrompt(sessionState, {
+      harness: "claude-code",
+      sessionId: "s",
+      cwd: "/tmp/repo",
+      prompt: "perfect, it works",
+    });
+
+    const core = createCore({
+      config: { baseUrl: "http://stub", maxRetries: 0 },
+      state: () => sessionState,
+      log: () => {},
+    });
+    await core.onSessionEnd({
+      harness: "claude-code",
+      sessionId: "s",
+      cwd: "/tmp/repo",
+      reason: "session_end",
+    });
+
+    const extractCall = calls.find(
+      (c) => c.method === "POST" && /\/api\/v1\/extract$/.test(c.url),
+    );
+    // /extract is still called — the episodic candidate must NOT block the batch.
+    expect(extractCall).toBeDefined();
+    const sentKinds = (extractCall!.body as { candidates: Array<{ kind: string }> })
+      .candidates.map((c) => c.kind);
+    expect(sentKinds).toContain("correction");
+    expect(sentKinds).not.toContain("episodic");
+    expect(sentKinds).toHaveLength(1);
+  });
+
   it("skips insert when /extract returns []", async () => {
     const inserts: unknown[] = [];
     const wrapped = vi.fn(async (url: string, init?: RequestInit) => {

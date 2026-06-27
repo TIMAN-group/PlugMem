@@ -35,6 +35,7 @@ import {
 import { deriveRepoGraphId } from "./repo_id.js";
 import {
   PlugMemError,
+  type CandidateKindWire,
   type ExtractedMemory,
   type ProceduralMemoryInput,
   type SemanticMemoryInput,
@@ -255,10 +256,26 @@ async function runPromotionGate(
   }
   if (candidates.length === 0) return;
 
+  // Only send kinds the server's /extract endpoint can handle. The detector
+  // may produce kinds (e.g. "episodic") that have no server insert path yet;
+  // including even one would 422 the entire batch (atomic validation) and
+  // silently drop the failure_delta + correction memories alongside it.
+  const sendable = candidates.filter(
+    (c): c is Candidate & { kind: CandidateKindWire } =>
+      c.kind === "failure_delta" || c.kind === "correction",
+  );
+  const skipped = candidates.length - sendable.length;
+  if (skipped > 0) {
+    runtime.log(
+      `promotion-gate: skipped ${skipped} candidate(s) of a kind /extract does not support (e.g. episodic)`,
+    );
+  }
+  if (sendable.length === 0) return;
+
   let extracted: ExtractedMemory[];
   try {
     const r = await runtime.client.extract({
-      candidates: candidates.map((c) => ({ kind: c.kind, window: c.window })),
+      candidates: sendable.map((c) => ({ kind: c.kind, window: c.window })),
     });
     extracted = r.memories;
   } catch (err) {
@@ -267,7 +284,7 @@ async function runPromotionGate(
   }
   if (extracted.length === 0) {
     runtime.log(
-      `promotion-gate: ${candidates.length} candidate(s) → 0 memories`,
+      `promotion-gate: ${sendable.length} candidate(s) → 0 memories`,
     );
     return;
   }
