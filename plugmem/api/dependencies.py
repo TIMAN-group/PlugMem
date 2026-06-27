@@ -27,9 +27,38 @@ from plugmem.storage.chroma import ChromaStorage
 logger = logging.getLogger(__name__)
 
 
+def _load_dotenv_once() -> None:
+    """Load KEY=VALUE pairs from a repo-root/CWD ``.env`` into ``os.environ``.
+
+    Dependency-free (no python-dotenv). Uses ``setdefault`` so a real
+    environment variable always wins over the file. Best-effort: any parse
+    error is ignored rather than blocking startup.
+    """
+    candidates = [
+        Path.cwd() / ".env",
+        Path(__file__).resolve().parents[2] / ".env",  # repo root
+    ]
+    for env_path in candidates:
+        if not env_path.is_file():
+            continue
+        try:
+            for raw in env_path.read_text(encoding="utf-8").splitlines():
+                line = raw.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                key, _, val = line.partition("=")
+                key = key.strip()
+                if key:
+                    os.environ.setdefault(key, val.strip().strip('"').strip("'"))
+        except Exception:
+            pass
+        break  # first existing .env wins
+
+
 @lru_cache
 def get_config() -> PlugMemConfig:
-    """Build config from environment variables."""
+    """Build config from environment variables (with optional .env fallback)."""
+    _load_dotenv_once()
     return PlugMemConfig(
         llm_base_url=os.getenv("LLM_BASE_URL", ""),
         llm_api_key=os.getenv("LLM_API_KEY", ""),
