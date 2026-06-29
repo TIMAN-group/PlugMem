@@ -28,6 +28,29 @@ docker run -d --name plugmem-eval \
 docker exec plugmem-eval /app/PlugMem/plugmem-coding-opencode/eval/docker/serve-eval.sh
 ```
 
+## Memory Inspector (visualization)
+
+To browse the graph in the **Memory Inspector** UI from the host, publish the port and
+bind the server to `0.0.0.0`:
+
+```bash
+docker run -d --name plugmem-eval -p 8000:8000 \
+  -e PLUGMEM_HOST=0.0.0.0 -e CHROMA_MODE=persistent \
+  -e LLM_BASE_URL=... -e EMBEDDING_BASE_URL=... -e EMBEDDING_MODEL=nvidia/NV-Embed-v2 \
+  plugmem-eval
+```
+
+Then open **http://localhost:8000/inspector/**. Views: **Graph** (Cytoscape topology —
+semantic/tag/procedural/subgoal nodes + `tagged`/subgoal edges, from
+`/api/v1/graphs/<id>/topology`), **Browse** (`/search`, `/node/...`), **Recall**
+(`/recall_trace` — node-by-node scoring), and **Sessions** (`/sessions`). Note: the
+Sessions view is empty for graphs the OpenCode adapter writes, because the adapter does
+not stamp `session_id` on insert/recall calls.
+
+`OC_MODEL` / `OPENCODE_BASE_URL` select the agent backend for the `*-eval.sh` scripts
+(see below). After a couple of agent sessions the Graph view shows the accumulated
+conventions and failure→success recipes.
+
 `OPENCODE_BASE_URL` / `OPENCODE_MODEL` override the agent backend for `run-eval.sh`.
 `serve-eval.sh` takes `OC_MODEL` (e.g. `OC_MODEL=anthropic/claude-sonnet-4-6` with
 `-e ANTHROPIC_API_KEY=...`, or `OC_MODEL=opencode/north-mini-code-free` for a free,

@@ -4,11 +4,14 @@
 set -u
 
 export CHROMA_MODE="${CHROMA_MODE:-ephemeral}"
+# Bind 127.0.0.1 by default; set PLUGMEM_HOST=0.0.0.0 (with `docker run -p 8000:8000`)
+# to reach the API + Memory Inspector (/inspector/) from the host browser.
+HOST="${PLUGMEM_HOST:-127.0.0.1}"
 echo "[entrypoint] LLM_BASE_URL=${LLM_BASE_URL:-<unset>}"
 echo "[entrypoint] EMBEDDING_BASE_URL=${EMBEDDING_BASE_URL:-<unset>}"
-echo "[entrypoint] starting PlugMem server on 127.0.0.1:8000 (chroma=$CHROMA_MODE) ..."
+echo "[entrypoint] starting PlugMem server on ${HOST}:8000 (chroma=$CHROMA_MODE) ..."
 
-uvicorn plugmem.api.app:app --host 127.0.0.1 --port 8000 --log-level warning &
+uvicorn plugmem.api.app:app --host "$HOST" --port 8000 --log-level warning &
 SERVER_PID=$!
 
 for i in $(seq 1 60); do

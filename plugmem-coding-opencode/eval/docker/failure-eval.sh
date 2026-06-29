@@ -12,7 +12,7 @@ OPENCODE_BASE_URL="${OPENCODE_BASE_URL:-https://jizejtestblackwell01.ngrok.app/v
 OC_TIMEOUT="${OC_TIMEOUT:-420}"
 case "$OC_MODEL" in local-qwen/*) LOCAL_ID="${OC_MODEL#local-qwen/}";; *) LOCAL_ID="placeholder";; esac
 
-cd /work/proj || exit 1
+mkdir -p /work/proj && cd /work/proj || exit 1
 rm -f plugin-debug.log run.py
 [ -d .git ] || git init -q
 cat > opencode.json <<JSON

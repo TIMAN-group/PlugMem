@@ -19,7 +19,7 @@ case "$OC_MODEL" in
   *)            LOCAL_ID="placeholder";;
 esac
 
-cd /work/proj || { echo "no /work/proj"; exit 1; }
+mkdir -p /work/proj && cd /work/proj || { echo "no /work/proj"; exit 1; }
 rm -f plugin-debug.log http_client.py
 [ -d .git ] || git init -q
 
