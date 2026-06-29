@@ -43,9 +43,13 @@ With a tool-calling backend (Claude Sonnet, `anthropic/claude-sonnet-4-6`):
   (recall audit `sem_ids:[0]`). Stored fact:
   `"Use httpx instead of requests for HTTP calls in this project."`
 
+Also validated against a self-hosted OpenAI-compatible endpoint (MiniMax-M2.7 on a
+llama.cpp server) via `OPENCODE_BASE_URL=<.../v1> OC_MODEL=local-qwen/<model-id>` — same
+result (1 semantic + 1 procedural written, recalled in session 2).
+
 Note: the agent backend must serve the OpenAI/Anthropic API directly with tool-calling
 support — a self-hosted vLLM needs `--enable-auto-tool-choice --tool-call-parser`, and
-endpoints fronted by an ngrok interstitial (`content_type: text/html`) won't work.
+endpoints fronted by an ngrok interstitial / 502 (`content_type: text/html`) won't work.
 
 ## Findings / requirements (learned from running this)
 
