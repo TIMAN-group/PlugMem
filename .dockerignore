@@ -1,0 +1,23 @@
+# Keep the build context lean — everything below is rebuilt inside the image
+# or unused by the OpenCode end-to-end eval.
+.git
+**/node_modules
+**/dist
+data
+logs
+**/__pycache__
+**/*.pyc
+**/*.egg-info
+.vscode
+.env
+# Benchmark / unrelated trees not needed by the eval image
+src
+assets
+examples
+design_docs
+scripts
+host_local_inference
+openclaw-plugmem-plugin
+plugmem-coding-claude-code
+plugmem-coding-core/eval
+**/.pytest_cache
