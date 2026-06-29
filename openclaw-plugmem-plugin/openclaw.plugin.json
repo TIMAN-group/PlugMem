@@ -4,6 +4,15 @@
   "description": "Long-term memory for LLM agents — store and recall experiences across sessions",
   "version": "0.1.0",
   "kind": "memory",
+  "contracts": {
+    "tools": [
+      "plugmem.remember",
+      "plugmem.recall"
+    ]
+  },
+  "activation": {
+    "onStartup": true
+  },
   "configSchema": {
     "type": "object",
     "properties": {
