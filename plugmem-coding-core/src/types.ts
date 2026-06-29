@@ -63,6 +63,8 @@ export interface TrajectoryInsertRequest {
 
 export interface StructuredInsertRequest {
   mode: "structured";
+  /** Stamps every inserted node with this id (groups them in the Sessions view). */
+  session_id?: string;
   episodic?: EpisodicStep[][];
   semantic?: SemanticMemoryInput[];
   procedural?: ProceduralMemoryInput[];
@@ -87,6 +89,8 @@ export interface RetrieveRequest {
   mode?: "semantic_memory" | "episodic_memory" | "procedural_memory" | null;
   min_confidence?: number;
   source_in?: MemorySourceWire[];
+  /** Logs this recall against the given session id (Sessions timeline). */
+  session_id?: string;
 }
 
 export interface RetrieveResponse {

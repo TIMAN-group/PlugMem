@@ -17,10 +17,12 @@ import {
 } from "./config.js";
 import {
   drainCandidates,
+  drainEpisodicSteps,
   recordPostTool,
   recordPreTool,
   recordUserPrompt,
   type Candidate,
+  type EpisodicStepRec,
 } from "./promotion.js";
 import {
   doRecall,
@@ -36,7 +38,6 @@ import { deriveRepoGraphId } from "./repo_id.js";
 import {
   PlugMemError,
   type CandidateKindWire,
-  type ExtractedMemory,
   type ProceduralMemoryInput,
   type SemanticMemoryInput,
 } from "./types.js";
@@ -127,6 +128,7 @@ async function handleSessionStart(
     sourceIn: cfg.sourceIn,
     charCap: cfg.charCap,
     blockTitle: "session-start",
+    sessionId: event.sessionId,
     log: runtime.log,
   });
 }
@@ -164,6 +166,7 @@ async function handleUserPrompt(
     sourceIn: cfg.sourceIn,
     charCap: cfg.charCap,
     blockTitle: "user-prompt",
+    sessionId: event.sessionId,
     log: runtime.log,
   });
 }
@@ -201,6 +204,7 @@ async function handlePreTool(
     sourceIn: cfg.sourceIn,
     charCap: cfg.charCap,
     blockTitle: `tool:${event.toolName}`,
+    sessionId: event.sessionId,
     log: runtime.log,
   });
 }
@@ -248,18 +252,19 @@ async function runPromotionGate(
   }
 
   let candidates: Candidate[];
+  let episodicSteps: EpisodicStepRec[];
   try {
     candidates = await drainCandidates(state);
+    episodicSteps = await drainEpisodicSteps(state);
   } catch (err) {
-    runtime.log(`drainCandidates failed`, err);
+    runtime.log(`drain failed`, err);
     return;
   }
-  if (candidates.length === 0) return;
+  if (candidates.length === 0 && episodicSteps.length === 0) return;
 
-  // Only send kinds the server's /extract endpoint can handle. The detector
-  // may produce kinds (e.g. "episodic") that have no server insert path yet;
-  // including even one would 422 the entire batch (atomic validation) and
-  // silently drop the failure_delta + correction memories alongside it.
+  // Promotion: only send kinds the server's /extract endpoint can handle. The
+  // detector may produce kinds (e.g. "episodic") that have no server insert
+  // path; including even one would 422 the entire batch (atomic validation).
   const sendable = candidates.filter(
     (c): c is Candidate & { kind: CandidateKindWire } =>
       c.kind === "failure_delta" || c.kind === "correction",
@@ -270,55 +275,69 @@ async function runPromotionGate(
       `promotion-gate: skipped ${skipped} candidate(s) of a kind /extract does not support (e.g. episodic)`,
     );
   }
-  if (sendable.length === 0) return;
-
-  let extracted: ExtractedMemory[];
-  try {
-    const r = await runtime.client.extract({
-      candidates: sendable.map((c) => ({ kind: c.kind, window: c.window })),
-    });
-    extracted = r.memories;
-  } catch (err) {
-    runtime.log(`extract call failed`, err);
-    return;
-  }
-  if (extracted.length === 0) {
-    runtime.log(
-      `promotion-gate: ${sendable.length} candidate(s) → 0 memories`,
-    );
-    return;
-  }
 
   const semantic: SemanticMemoryInput[] = [];
   const procedural: ProceduralMemoryInput[] = [];
-  for (const m of extracted) {
-    if (m.type === "semantic") {
-      semantic.push({
-        semantic_memory: m.semantic_memory,
-        tags: m.tags ?? [],
-        source: m.source,
-        confidence: m.confidence,
+  if (sendable.length > 0) {
+    try {
+      const r = await runtime.client.extract({
+        candidates: sendable.map((c) => ({ kind: c.kind, window: c.window })),
       });
-    } else {
-      procedural.push({
-        subgoal: m.subgoal,
-        procedural_memory: m.procedural_memory,
-        source: m.source,
-        confidence: m.confidence,
-      });
+      for (const m of r.memories) {
+        if (m.type === "semantic") {
+          semantic.push({
+            semantic_memory: m.semantic_memory,
+            tags: m.tags ?? [],
+            source: m.source,
+            confidence: m.confidence,
+          });
+        } else {
+          procedural.push({
+            subgoal: m.subgoal,
+            procedural_memory: m.procedural_memory,
+            source: m.source,
+            confidence: m.confidence,
+          });
+        }
+      }
+    } catch (err) {
+      runtime.log(`extract call failed`, err);
     }
   }
+
+  // Episodic substrate: the session trajectory (user prompts + tool steps).
+  // Inserting it alongside the promoted memories grounds them on episodic nodes
+  // (graph.insert links semantic/procedural to this trajectory) and gives the
+  // Sessions view a per-session log. Inserted even if nothing was promoted, so
+  // the episodic substrate is reliable.
+  const episodic = episodicSteps.length
+    ? [
+        episodicSteps.map((s) => ({
+          observation: s.observation,
+          action: s.action,
+          subgoal: "",
+          state: "",
+          reward: "",
+        })),
+      ]
+    : undefined;
+
+  if (!semantic.length && !procedural.length && !episodic) return;
 
   const graphId = await deriveRepoGraphId(harness, cwd);
   try {
     await runtime.client.ensureGraph(graphId);
     await runtime.client.insertMemories(graphId, {
       mode: "structured",
+      session_id: sessionId,
+      ...(episodic ? { episodic } : {}),
       ...(semantic.length ? { semantic } : {}),
       ...(procedural.length ? { procedural } : {}),
     });
     runtime.log(
-      `promotion-gate: inserted ${semantic.length} semantic + ${procedural.length} procedural into ${graphId}`,
+      `promotion-gate: inserted ${semantic.length} semantic + ${procedural.length} procedural + ${
+        episodic ? episodic[0].length : 0
+      } episodic into ${graphId} (session ${sessionId})`,
     );
   } catch (err) {
     if (err instanceof PlugMemError) {

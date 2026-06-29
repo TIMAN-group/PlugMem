@@ -314,24 +314,22 @@ describe("createCore — promotion gate at session_end", () => {
     expect(sentKinds).toHaveLength(1);
   });
 
-  it("skips insert when /extract returns []", async () => {
-    const inserts: unknown[] = [];
+  it("inserts the episodic substrate (session-stamped) even when /extract returns []", async () => {
+    const inserts: any[] = [];
     const wrapped = vi.fn(async (url: string, init?: RequestInit) => {
       const method = init?.method ?? "GET";
       if (method === "POST" && /\/api\/v1\/extract$/.test(url)) {
-        return new Response(
-          JSON.stringify({ memories: [] }),
-          { status: 200 },
-        );
+        return new Response(JSON.stringify({ memories: [] }), { status: 200 });
       }
       if (method === "POST" && /\/memories$/.test(url)) {
-        inserts.push(true);
+        inserts.push(JSON.parse(init!.body as string));
       }
       return new Response("{}", { status: 200 });
     });
     globalThis.fetch = wrapped as unknown as typeof fetch;
 
     const sessionState = new MapState();
+    // A user prompt records an episodic step (trajectory) + a correction candidate.
     await recordUserPrompt(sessionState, {
       harness: "claude-code",
       sessionId: "s",
@@ -351,7 +349,21 @@ describe("createCore — promotion gate at session_end", () => {
       reason: "session_end",
     });
 
-    expect(inserts).toHaveLength(0);
+    // /extract found nothing promotable, but the episodic substrate is still
+    // inserted (stamped with the session id) with no semantic/procedural.
+    expect(inserts).toHaveLength(1);
+    const ins = inserts[0] as {
+      mode: string;
+      session_id?: string;
+      episodic?: unknown[][];
+      semantic?: unknown[];
+      procedural?: unknown[];
+    };
+    expect(ins.mode).toBe("structured");
+    expect(ins.session_id).toBe("s");
+    expect(ins.episodic?.[0]?.length).toBe(1);
+    expect(ins.semantic).toBeUndefined();
+    expect(ins.procedural).toBeUndefined();
   });
 
   it("does not call /extract when there are no candidates", async () => {

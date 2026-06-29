@@ -107,6 +107,8 @@ export interface DoRecallParams {
   sourceIn?: MemorySourceWire[];
   charCap: number;
   blockTitle: string;
+  /** Logs this recall against the session id in the recall audit / Sessions view. */
+  sessionId?: string;
   log: (msg: string, err?: unknown) => void;
 }
 
@@ -126,6 +128,7 @@ export async function doRecall(
       // only to force a specific type.
       ...(p.minConfidence !== undefined ? { min_confidence: p.minConfidence } : {}),
       ...(p.sourceIn ? { source_in: p.sourceIn } : {}),
+      ...(p.sessionId ? { session_id: p.sessionId } : {}),
     } as Parameters<typeof p.client.retrieve>[1]);
   } catch (err) {
     p.log(`retrieve(${p.graphId}) failed`, err);

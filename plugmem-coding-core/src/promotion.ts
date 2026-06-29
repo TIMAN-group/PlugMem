@@ -27,6 +27,13 @@ export interface Candidate {
   ts: number;
 }
 
+/** One step of the session trajectory — the episodic substrate that semantic
+ *  and procedural memories are grounded on. */
+export interface EpisodicStepRec {
+  observation: string;
+  action: string;
+}
+
 interface PendingCall {
   toolName: string;
   toolInput: unknown;
@@ -43,6 +50,23 @@ interface FailureRecord {
 const PENDING_KEY = "pending_calls";
 const FAILURES_KEY = "recent_failures";
 const CANDIDATES_KEY = "candidates";
+const EPISODIC_KEY = "episodic_steps";
+
+// Cap on episodic steps held per drain (one trajectory) and per-field length,
+// so episodic nodes stay bounded on long turns while remaining a readable log.
+const MAX_EPISODIC_STEPS = 60;
+const MAX_STEP_CHARS = 600;
+
+const clipStep = (s: string, n = MAX_STEP_CHARS): string =>
+  s.length > n ? s.slice(0, n) + "…" : s;
+const asText = (v: unknown): string => {
+  if (typeof v === "string") return v;
+  try {
+    return JSON.stringify(v) ?? String(v);
+  } catch {
+    return String(v);
+  }
+};
 
 // Cap on how many recent failures we hold for matching against a later
 // success. Prevents the cache from growing unbounded across long sessions.
@@ -98,6 +122,13 @@ export async function recordPostTool(
   delete pending[e.callId];
   await state.set(PENDING_KEY, pending);
 
+  // Record this tool step into the session trajectory (episodic substrate),
+  // regardless of outcome — this is the raw "what the agent did" log.
+  await recordEpisodicStep(state, {
+    observation: clipStep(`[${e.outcome}] ${e.toolResult}`),
+    action: clipStep(`${e.toolName} ${asText(e.toolInput)}`),
+  });
+
   // We only act on outcomes we're sure about. "unknown" is conservative —
   // skip both the failure-recording and the success-pairing path.
   if (e.outcome === "failure") {
@@ -145,6 +176,12 @@ export async function recordUserPrompt(
   state: SessionState,
   e: UserPromptEvent,
 ): Promise<void> {
+  // The user's request is an episodic step (observation) in the trajectory.
+  await recordEpisodicStep(state, {
+    observation: clipStep(`User: ${e.prompt}`),
+    action: "",
+  });
+
   if (matchesCorrectionPattern(e.prompt)) {
     await appendCandidate(state, {
       kind: "correction",
@@ -191,11 +228,32 @@ async function appendCandidate(
   await state.set(CANDIDATES_KEY, list);
 }
 
+async function recordEpisodicStep(
+  state: SessionState,
+  step: EpisodicStepRec,
+): Promise<void> {
+  const list = (await state.get<EpisodicStepRec[]>(EPISODIC_KEY)) ?? [];
+  list.push(step);
+  if (list.length > MAX_EPISODIC_STEPS) {
+    list.splice(0, list.length - MAX_EPISODIC_STEPS);
+  }
+  await state.set(EPISODIC_KEY, list);
+}
+
 export async function drainCandidates(
   state: SessionState,
 ): Promise<Candidate[]> {
   const list = (await state.get<Candidate[]>(CANDIDATES_KEY)) ?? [];
   await state.del(CANDIDATES_KEY);
+  return list;
+}
+
+/** Drain the accumulated session trajectory (the episodic substrate). */
+export async function drainEpisodicSteps(
+  state: SessionState,
+): Promise<EpisodicStepRec[]> {
+  const list = (await state.get<EpisodicStepRec[]>(EPISODIC_KEY)) ?? [];
+  await state.del(EPISODIC_KEY);
   return list;
 }
 
