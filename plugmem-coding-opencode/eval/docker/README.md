@@ -28,15 +28,24 @@ docker run -d --name plugmem-eval \
 docker exec plugmem-eval /app/PlugMem/plugmem-coding-opencode/eval/docker/serve-eval.sh
 ```
 
-`OPENCODE_BASE_URL` / `OPENCODE_MODEL` override the agent backend.
+`OPENCODE_BASE_URL` / `OPENCODE_MODEL` override the agent backend for `run-eval.sh`.
+`serve-eval.sh` takes `OC_MODEL` (e.g. `OC_MODEL=anthropic/claude-sonnet-4-6` with
+`-e ANTHROPIC_API_KEY=...`, or `OC_MODEL=opencode/north-mini-code-free` for a free,
+keyless, tool-capable model).
 
 ## Verified result
 
-Session 1 (a correction prompt) → the plugin promotes a semantic memory; Session 2
-(a related prompt) → session-start **and** user-prompt recall both surface it. Confirmed
-against the server: `stats.semantic == 1`, the stored fact
-`"Use httpx instead of requests for HTTP calls in this project."`, and recall-audit
-entries selecting that node.
+With a tool-calling backend (Claude Sonnet, `anthropic/claude-sonnet-4-6`):
+- Session 1 — the agent did real work (wrote `http_client.py` using `httpx` via real
+  `write`/`read`/`bash` tool calls, which flow through the adapter's outcome parser),
+  and the correction was promoted: `inserted 1 semantic + 1 procedural`.
+- Session 2 — **session-start recall and user-prompt recall both selected the memory**
+  (recall audit `sem_ids:[0]`). Stored fact:
+  `"Use httpx instead of requests for HTTP calls in this project."`
+
+Note: the agent backend must serve the OpenAI/Anthropic API directly with tool-calling
+support — a self-hosted vLLM needs `--enable-auto-tool-choice --tool-call-parser`, and
+endpoints fronted by an ngrok interstitial (`content_type: text/html`) won't work.
 
 ## Findings / requirements (learned from running this)
 

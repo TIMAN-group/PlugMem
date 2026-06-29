@@ -3,7 +3,9 @@
 # outlives each run and its async session-end work (extract -> insert) completes.
 set -u
 BASE="http://127.0.0.1:8000/api/v1"
-M="local-qwen/CalamitousFelicitousness/Qwen2.5-32B-Instruct-fp8-dynamic"
+# Agent model is overridable: e.g. OC_MODEL=anthropic/claude-sonnet-4-6 (needs
+# ANTHROPIC_API_KEY) or OC_MODEL=opencode/north-mini-code-free (free, no key).
+M="${OC_MODEL:-local-qwen/CalamitousFelicitousness/Qwen2.5-32B-Instruct-fp8-dynamic}"
 GID="repo_opencode_local__work_proj"
 
 cd /work/proj || { echo "no /work/proj"; exit 1; }
@@ -27,15 +29,18 @@ run_one () {
   echo "stats: $(curl -s "$BASE/graphs/$GID/stats")"
 }
 
-run_one "SESSION 1 (correction)" "Stop using the requests library. We use httpx for all HTTP calls in this project."
-run_one "SESSION 2 (recall)"     "What HTTP client should this project use, and why?"
+rm -f http_client.py
+run_one "SESSION 1 (correction + tool action)" \
+  "Stop using the requests library. We use httpx for all HTTP calls in this project. Create http_client.py with a function get_json(url) that fetches and returns JSON using httpx."
+echo "http_client.py: $(test -f http_client.py && echo CREATED || echo MISSING)"
+run_one "SESSION 2 (recall)" "What HTTP client should this project use, and why?"
 
 echo "=== retrieve(semantic) ==="
 curl -s -X POST "$BASE/graphs/$GID/retrieve" -H 'Content-Type: application/json' \
   -d '{"observation":"which HTTP client should I use","mode":"semantic_memory"}' | head -c 500
 echo
-echo "=== adapter log (DIAG / promotion / recall) ==="
-grep -E 'DIAG|promotion-gate|inserted|extract call|Processing user prompt|SESSION END|SESSION START' plugin-debug.log | tail -30
+echo "=== adapter log (tools / promotion / recall) ==="
+grep -E 'TOOL BEFORE|TOOL AFTER|promotion-gate|inserted|extract call|Processing user prompt' plugin-debug.log | tail -40
 
 kill "$SERVE_PID" 2>/dev/null
 echo "done"
