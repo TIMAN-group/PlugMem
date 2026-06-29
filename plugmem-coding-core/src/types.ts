@@ -36,6 +36,10 @@ export interface SemanticMemoryInput {
   tags?: string[];
   source?: MemorySourceWire;
   confidence?: number;
+  /** Index into the `episodic` trajectory list this fact is grounded on. */
+  trajectory_num?: number;
+  /** Step index within that segment; omit to ground on the whole segment. */
+  turn_num?: number;
 }
 
 export interface ProceduralMemoryInput {
@@ -44,6 +48,9 @@ export interface ProceduralMemoryInput {
   return?: number;
   source?: MemorySourceWire;
   confidence?: number;
+  /** Index into the `episodic` trajectory list this experience came from —
+   *  grounds the procedural node on that split sub-sequence. */
+  trajectory_num?: number;
 }
 
 export interface EpisodicStep {

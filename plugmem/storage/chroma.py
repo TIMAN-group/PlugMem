@@ -209,6 +209,7 @@ class ChromaStorage:
         state: str = "",
         reward: str = "",
         embedding: Optional[List[float]] = None,
+        next_episodic_id: Optional[int] = None,
     ) -> None:
         doc = f"{observation}\n{action}" if observation or action else ""
         metadata: Dict[str, Any] = {
@@ -222,6 +223,10 @@ class ChromaStorage:
         }
         if session_id is not None:
             metadata["session_id"] = session_id
+        # Chroma metadata can't hold None — omit the key for the last step
+        # of a segment rather than storing a sentinel.
+        if next_episodic_id is not None:
+            metadata["next_episodic_id"] = next_episodic_id
         col = self._col(graph_id, "episodic")
         kwargs: Dict[str, Any] = {
             "ids": [str(episodic_id)],
@@ -248,6 +253,7 @@ class ChromaStorage:
             state = node.get("state", "")
             reward = node.get("reward", "")
             embedding = node.get("embedding")
+            next_episodic_id = node.get("next_episodic_id")
             doc = f"{observation}\n{action}" if observation or action else ""
             metadata = {
                 "episodic_id": episodic_id,
@@ -260,6 +266,8 @@ class ChromaStorage:
             }
             if session_id is not None:
                 metadata["session_id"] = session_id
+            if next_episodic_id is not None:
+                metadata["next_episodic_id"] = next_episodic_id
             ids.append(str(episodic_id))
             documents.append(doc)
             metadatas.append(metadata)

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   drainCandidates,
+  drainEpisodicSteps,
   matchesCorrectionPattern,
   recordPostTool,
   recordPreTool,
@@ -212,6 +213,52 @@ describe("correction detector", () => {
       prompt: "please add tests for the auth module",
     });
     expect(await drainCandidates(state)).toHaveLength(0);
+  });
+});
+
+describe("episodic segmentation", () => {
+  it("opens a new segment per user prompt and stamps steps + candidates", async () => {
+    const state = new MapState();
+    const base = { harness: "claude-code" as const, sessionId: "s", cwd: "/tmp" };
+
+    // Segment 0: first request + a failing tool step.
+    await recordUserPrompt(state, { ...base, prompt: "add a logger" });
+    await recordPreTool(state, {
+      ...base, toolName: "Bash", toolInput: { command: "x" }, callId: "c1",
+    });
+    await recordPostTool(state, {
+      ...base, toolName: "Bash", toolInput: { command: "x" },
+      callId: "c1", toolResult: "ImportError", outcome: "failure",
+    });
+
+    // Segment 1: second request + the resolving success (failure_delta here).
+    await recordUserPrompt(state, { ...base, prompt: "now fix the import" });
+    await recordPreTool(state, {
+      ...base, toolName: "Bash", toolInput: { command: "pip install -e ." }, callId: "c2",
+    });
+    await recordPostTool(state, {
+      ...base, toolName: "Bash", toolInput: { command: "pip install -e ." },
+      callId: "c2", toolResult: "PASSED", outcome: "success",
+    });
+
+    // drainCandidates reads the trajectory + boundaries, so it must run first.
+    const cands = await drainCandidates(state);
+    const fd = cands.find((c) => c.kind === "failure_delta");
+    expect(fd?.segment).toBe(1);
+
+    const steps = await drainEpisodicSteps(state);
+    // prompt(0), fail(0), prompt(1), success(1)
+    expect(steps.map((s) => s.segment)).toEqual([0, 0, 1, 1]);
+  });
+
+  it("keeps the first prompt in segment 0", async () => {
+    const state = new MapState();
+    await recordUserPrompt(state, {
+      harness: "claude-code", sessionId: "s", cwd: "/tmp", prompt: "hello",
+    });
+    const steps = await drainEpisodicSteps(state);
+    expect(steps).toHaveLength(1);
+    expect(steps[0]!.segment).toBe(0);
   });
 });
 

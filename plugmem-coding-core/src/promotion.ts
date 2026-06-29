@@ -25,13 +25,24 @@ export interface Candidate {
   window: string;
   toolName?: string;
   ts: number;
+  /** Episodic step index where this candidate resolved. Mapped to a segment
+   *  at drain time so the extracted memory grounds on its own trajectory split. */
+  stepIndex: number;
+  /** Filled at drain: the subgoal segment this candidate's memory grounds on. */
+  segment: number;
 }
 
-/** One step of the session trajectory — the episodic substrate that semantic
- *  and procedural memories are grounded on. */
-export interface EpisodicStepRec {
+/** One stored step of the session trajectory (the raw episodic substrate). */
+interface StoredStep {
   observation: string;
   action: string;
+}
+
+/** One step of the drained trajectory. `segment` partitions the trajectory into
+ *  subgoal units (split at user prompts + resolved candidates), so each
+ *  procedural memory grounds on the contiguous sub-sequence it came from. */
+export interface EpisodicStepRec extends StoredStep {
+  segment: number;
 }
 
 interface PendingCall {
@@ -51,6 +62,13 @@ const PENDING_KEY = "pending_calls";
 const FAILURES_KEY = "recent_failures";
 const CANDIDATES_KEY = "candidates";
 const EPISODIC_KEY = "episodic_steps";
+// Segment-start step indices: positions in the trajectory where a new subgoal
+// begins. The trajectory is split here so each procedural grounds on its own
+// sub-sequence — the coding-agent analog of the original PlugMem
+// subgoal-similarity split. A boundary is added at every user prompt and after
+// every resolved candidate (a failure→fix cycle / correction completing a
+// subgoal). Index 0 is always an implicit boundary.
+const BOUNDARIES_KEY = "episodic_boundaries";
 
 // Cap on episodic steps held per drain (one trajectory) and per-field length,
 // so episodic nodes stay bounded on long turns while remaining a readable log.
@@ -124,7 +142,7 @@ export async function recordPostTool(
 
   // Record this tool step into the session trajectory (episodic substrate),
   // regardless of outcome — this is the raw "what the agent did" log.
-  await recordEpisodicStep(state, {
+  const stepIndex = await pushEpisodicStep(state, {
     observation: clipStep(`[${e.outcome}] ${e.toolResult}`),
     action: clipStep(`${e.toolName} ${asText(e.toolInput)}`),
   });
@@ -169,30 +187,40 @@ export async function recordPostTool(
     window,
     toolName: e.toolName,
     ts: now,
+    stepIndex,
+    segment: 0,
   });
+  // The fix cycle completed a subgoal — the next step starts a new segment.
+  await addBoundary(state, stepIndex + 1);
 }
 
 export async function recordUserPrompt(
   state: SessionState,
   e: UserPromptEvent,
 ): Promise<void> {
-  // The user's request is an episodic step (observation) in the trajectory.
-  await recordEpisodicStep(state, {
+  // A new user request begins a new subgoal segment. The request itself is the
+  // opening episodic step of that segment.
+  const stepIndex = await pushEpisodicStep(state, {
     observation: clipStep(`User: ${e.prompt}`),
     action: "",
   });
+  await addBoundary(state, stepIndex);
 
   if (matchesCorrectionPattern(e.prompt)) {
     await appendCandidate(state, {
       kind: "correction",
       window: `User correction: ${e.prompt.slice(0, 1500)}`,
       ts: Date.now(),
+      stepIndex,
+      segment: 0,
     });
   } else if (EPISODIC_PATTERNS.some((re) => re.test(e.prompt))) {
     await appendCandidate(state, {
       kind: "episodic",
       window: `Goal completed: ${e.prompt.slice(0, 1500)}`,
       ts: Date.now(),
+      stepIndex,
+      segment: 0,
     });
   }
 }
@@ -228,33 +256,88 @@ async function appendCandidate(
   await state.set(CANDIDATES_KEY, list);
 }
 
-async function recordEpisodicStep(
+/** Append a raw trajectory step; returns its absolute index in the trajectory. */
+async function pushEpisodicStep(
   state: SessionState,
-  step: EpisodicStepRec,
-): Promise<void> {
-  const list = (await state.get<EpisodicStepRec[]>(EPISODIC_KEY)) ?? [];
+  step: StoredStep,
+): Promise<number> {
+  const list = (await state.get<StoredStep[]>(EPISODIC_KEY)) ?? [];
   list.push(step);
-  if (list.length > MAX_EPISODIC_STEPS) {
-    list.splice(0, list.length - MAX_EPISODIC_STEPS);
-  }
   await state.set(EPISODIC_KEY, list);
+  return list.length - 1;
 }
 
+/** Record a segment-start boundary at the given step index (idempotent). */
+async function addBoundary(state: SessionState, idx: number): Promise<void> {
+  const b = (await state.get<number[]>(BOUNDARIES_KEY)) ?? [];
+  if (!b.includes(idx)) {
+    b.push(idx);
+    await state.set(BOUNDARIES_KEY, b);
+  }
+}
+
+/** Build the absolute-index → segment mapping for one drain.
+ *
+ *  Applies the trailing-window cap (keep the last MAX_EPISODIC_STEPS steps so a
+ *  pathologically long turn stays bounded), then numbers contiguous segments
+ *  from the boundaries that fall inside the window. Index 0 of the window is
+ *  always a segment start, so segment numbers are dense (0..n-1) and line up
+ *  with the trajectory list the gate builds. */
+function buildSegmentMap(
+  nSteps: number,
+  rawBoundaries: number[],
+): { offset: number; segmentOf: (absIdx: number) => number } {
+  const offset = Math.max(0, nSteps - MAX_EPISODIC_STEPS);
+  const starts = new Set<number>([offset]);
+  for (const b of rawBoundaries) {
+    if (b > offset && b < nSteps) starts.add(b);
+  }
+  const sorted = [...starts].sort((a, b) => a - b);
+  const segmentOf = (absIdx: number): number => {
+    if (absIdx <= offset) return 0;
+    let seg = -1;
+    for (const s of sorted) {
+      if (s <= absIdx) seg += 1;
+      else break;
+    }
+    return seg < 0 ? 0 : seg;
+  };
+  return { offset, segmentOf };
+}
+
+/** Drain promotion candidates, stamping each with the segment its evidence step
+ *  falls in. Reads (does not clear) the trajectory + boundaries, so it must run
+ *  before drainEpisodicSteps. */
 export async function drainCandidates(
   state: SessionState,
 ): Promise<Candidate[]> {
   const list = (await state.get<Candidate[]>(CANDIDATES_KEY)) ?? [];
+  const steps = (await state.get<StoredStep[]>(EPISODIC_KEY)) ?? [];
+  const boundaries = (await state.get<number[]>(BOUNDARIES_KEY)) ?? [];
   await state.del(CANDIDATES_KEY);
-  return list;
+  const { offset, segmentOf } = buildSegmentMap(steps.length, boundaries);
+  return list
+    // Drop candidates whose evidence step fell outside the trailing window.
+    .filter((c) => c.stepIndex >= offset)
+    .map((c) => ({ ...c, segment: segmentOf(c.stepIndex) }));
 }
 
-/** Drain the accumulated session trajectory (the episodic substrate). */
+/** Drain the accumulated session trajectory (the episodic substrate), split into
+ *  subgoal segments. Clears the trajectory + boundaries so a post-compact
+ *  continuation starts fresh. Run after drainCandidates. */
 export async function drainEpisodicSteps(
   state: SessionState,
 ): Promise<EpisodicStepRec[]> {
-  const list = (await state.get<EpisodicStepRec[]>(EPISODIC_KEY)) ?? [];
+  const list = (await state.get<StoredStep[]>(EPISODIC_KEY)) ?? [];
+  const boundaries = (await state.get<number[]>(BOUNDARIES_KEY)) ?? [];
   await state.del(EPISODIC_KEY);
-  return list;
+  await state.del(BOUNDARIES_KEY);
+  const { offset, segmentOf } = buildSegmentMap(list.length, boundaries);
+  return list.slice(offset).map((s, i) => ({
+    observation: s.observation,
+    action: s.action,
+    segment: segmentOf(offset + i),
+  }));
 }
 
 // ---------------------------------------------------------------------

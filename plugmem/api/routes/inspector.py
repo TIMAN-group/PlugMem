@@ -63,6 +63,7 @@ def _serialize_episodic(n) -> Dict[str, Any]:
         "reward": n.reward,
         "session_id": n.session_id,
         "time": n.time,
+        "next_episodic_id": getattr(n, "next_episodic_id", None),
     }
 
 
@@ -237,6 +238,16 @@ async def get_node_detail(graph_id: str, node_type: str, node_id: int) -> NodeDe
         # reverse lookup: which semantics linked back?
         linked = [s for s in graph.semantic_nodes if any(e.episodic_id == node.episodic_id for e in s.episodic_nodes)]
         edges["semantics"] = [_serialize_semantic(s) for s in linked]
+        # Sequence neighbors within the trajectory segment.
+        nxt = graph.episodic_id2node.get(getattr(node, "next_episodic_id", None))
+        if nxt is not None:
+            edges["next"] = [_serialize_episodic(nxt)]
+        prev = [
+            e for e in graph.episodic_nodes
+            if getattr(e, "next_episodic_id", None) == node.episodic_id
+        ]
+        if prev:
+            edges["prev"] = [_serialize_episodic(e) for e in prev]
 
     return NodeDetailResponse(
         graph_id=graph_id,
@@ -499,6 +510,12 @@ def _build_topology(
         for e in p.episodic_nodes:
             if e.episodic_id in included["episodic"]:
                 _add(pid, _uid("episodic", e.episodic_id), "from_session")
+
+    # Episodic sequence chain: consecutive steps within a trajectory segment.
+    for e in pools["episodic"]:
+        nxt = getattr(e, "next_episodic_id", None)
+        if nxt is not None and nxt in included["episodic"]:
+            _add(_uid("episodic", e.episodic_id), _uid("episodic", nxt), "next")
 
     counts = {t: len(pools[t]) for t in pools}
     counts["total_nodes"] = len(out_nodes)

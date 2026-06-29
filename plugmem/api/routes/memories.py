@@ -98,12 +98,20 @@ def _insert_structured(graph, body: MemoryInsertRequest) -> MemoryInsertResponse
     # Semantic: embed text + tags
     if body.semantic:
         for sem in body.semantic:
-            mem.memory["semantic"].append({
+            sem_dict = {
                 "semantic_memory": sem.semantic_memory,
                 "tags": sem.tags,
                 "source": sem.source,
                 "confidence": sem.confidence,
-            })
+            }
+            # Only pass grounding indices when supplied — the graph defaults to
+            # whole-trajectory grounding otherwise (None breaks the `< len`
+            # comparison in graph.insert).
+            if sem.trajectory_num is not None:
+                sem_dict["trajectory_num"] = sem.trajectory_num
+            if sem.turn_num is not None:
+                sem_dict["turn_num"] = sem.turn_num
+            mem.memory["semantic"].append(sem_dict)
             # Use pre-computed embeddings if provided, otherwise fall back to embedder
             sem_emb = sem.embedding if sem.embedding is not None else embedder.embed(sem.semantic_memory)
             if sem.tag_embeddings is not None and len(sem.tag_embeddings) == len(sem.tags):
@@ -118,14 +126,19 @@ def _insert_structured(graph, body: MemoryInsertRequest) -> MemoryInsertResponse
     # Procedural: embed subgoal
     if body.procedural:
         for proc in body.procedural:
-            mem.memory["procedural"].append({
+            proc_dict = {
                 "subgoal": proc.subgoal,
                 "procedural_memory": proc.procedural_memory,
                 "time": graph.semantic_time,
                 "return": proc.return_value,
                 "source": proc.source,
                 "confidence": proc.confidence,
-            })
+            }
+            # Ground this experience on its own episodic segment (the split
+            # sub-sequence) instead of trajectory 0 / the whole trajectory.
+            if proc.trajectory_num is not None:
+                proc_dict["trajectory_num"] = proc.trajectory_num
+            mem.memory["procedural"].append(proc_dict)
             # Use pre-computed embedding if provided, otherwise fall back to embedder
             subgoal_emb = proc.subgoal_embedding if proc.subgoal_embedding is not None else embedder.embed(proc.subgoal)
             mem.memory_embedding["procedural"].append({

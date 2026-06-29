@@ -197,6 +197,7 @@ class MemoryGraph:
                 subgoal=meta.get("subgoal", ""),
                 state=meta.get("state", ""),
                 reward=meta.get("reward", ""),
+                next_episodic_id=meta.get("next_episodic_id"),
             )
             self.episodic_nodes.append(node)
             # Track sessions
@@ -372,11 +373,18 @@ class MemoryGraph:
         episodic_nodes: List[List[EpisodicNode]] = []
         for i, trajectory in enumerate(memory.memory["episodic"]):
             episodic_nodes.append([])
-            for step in trajectory:
+            n_steps = len(trajectory)
+            for k, step in enumerate(trajectory):
                 epis_id = len(self.episodic_nodes)
                 observation = step.get("observation", "") if isinstance(step, dict) else str(step)
                 action = step.get("action", "") if isinstance(step, dict) else ""
                 time_val = step.get("time", self.semantic_time) if isinstance(step, dict) else self.semantic_time
+
+                # Chain to the next step in this segment. Steps are appended one
+                # at a time, so the next step's id is the current id + 1. The
+                # last step of a segment gets None — the sequence is split at
+                # segment boundaries (one chain per subgoal / procedural unit).
+                next_id = epis_id + 1 if k < n_steps - 1 else None
 
                 epis_node = EpisodicNode(
                     episodic_id=epis_id,
@@ -387,6 +395,7 @@ class MemoryGraph:
                     subgoal=step.get("subgoal", "") if isinstance(step, dict) else "",
                     state=step.get("state", "") if isinstance(step, dict) else "",
                     reward=step.get("reward", "") if isinstance(step, dict) else "",
+                    next_episodic_id=next_id,
                 )
                 self.episodic_nodes.append(epis_node)
                 self.episodic_id2node[epis_id] = epis_node
@@ -404,6 +413,7 @@ class MemoryGraph:
                     subgoal=epis_node.subgoal,
                     state=epis_node.state,
                     reward=epis_node.reward,
+                    next_episodic_id=next_id,
                 )
 
         all_episodic_ids = [n.episodic_id for group in episodic_nodes for n in group]
@@ -429,11 +439,20 @@ class MemoryGraph:
                 session_id=sid,
             )
 
-            # Link episodic nodes
+            # Link episodic nodes. With both indices (trajectory mode) the fact
+            # is grounded on the exact step it came from. With only
+            # trajectory_num (structured/promotion mode) it is grounded on its
+            # whole episodic segment; with neither, on the full trajectory.
             traj_num = sem_item.get("trajectory_num", 0)
-            turn_num = sem_item.get("turn_num", 0)
-            if traj_num < len(episodic_nodes) and turn_num < len(episodic_nodes[traj_num]):
-                sem_node.episodic_nodes.append(episodic_nodes[traj_num][turn_num])
+            turn_num = sem_item.get("turn_num", None)
+            if traj_num is not None and traj_num < len(episodic_nodes):
+                seg = episodic_nodes[traj_num]
+                if turn_num is not None and 0 <= turn_num < len(seg):
+                    sem_node.episodic_nodes.append(seg[turn_num])
+                elif seg:
+                    sem_node.episodic_nodes = list(seg)
+                else:
+                    sem_node.episodic_nodes = [n for group in episodic_nodes for n in group]
             else:
                 sem_node.episodic_nodes = [n for group in episodic_nodes for n in group]
 

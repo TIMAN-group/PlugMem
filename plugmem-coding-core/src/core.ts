@@ -38,6 +38,7 @@ import { deriveRepoGraphId } from "./repo_id.js";
 import {
   PlugMemError,
   type CandidateKindWire,
+  type EpisodicStep,
   type ProceduralMemoryInput,
   type SemanticMemoryInput,
 } from "./types.js";
@@ -276,12 +277,26 @@ async function runPromotionGate(
     );
   }
 
+  // Group sendable candidates by their episodic segment so each extracted
+  // memory is grounded on the trajectory split it came from. Extracting per
+  // segment preserves that provenance — a single batch would lose which
+  // candidate (and therefore which sub-sequence) produced each memory.
+  const bySegment = new Map<
+    number,
+    Array<Candidate & { kind: CandidateKindWire }>
+  >();
+  for (const c of sendable) {
+    const arr = bySegment.get(c.segment) ?? [];
+    arr.push(c);
+    bySegment.set(c.segment, arr);
+  }
+
   const semantic: SemanticMemoryInput[] = [];
   const procedural: ProceduralMemoryInput[] = [];
-  if (sendable.length > 0) {
+  for (const [segment, cands] of bySegment) {
     try {
       const r = await runtime.client.extract({
-        candidates: sendable.map((c) => ({ kind: c.kind, window: c.window })),
+        candidates: cands.map((c) => ({ kind: c.kind, window: c.window })),
       });
       for (const m of r.memories) {
         if (m.type === "semantic") {
@@ -290,6 +305,9 @@ async function runPromotionGate(
             tags: m.tags ?? [],
             source: m.source,
             confidence: m.confidence,
+            // Ground the fact on its own episodic segment (whole segment, since
+            // the exact originating step is not tracked — turn_num omitted).
+            trajectory_num: segment,
           });
         } else {
           procedural.push({
@@ -297,30 +315,40 @@ async function runPromotionGate(
             procedural_memory: m.procedural_memory,
             source: m.source,
             confidence: m.confidence,
+            // Ground the experience on the split sub-sequence it came from.
+            trajectory_num: segment,
           });
         }
       }
     } catch (err) {
-      runtime.log(`extract call failed`, err);
+      runtime.log(`extract call failed (segment ${segment})`, err);
     }
   }
 
-  // Episodic substrate: the session trajectory (user prompts + tool steps).
-  // Inserting it alongside the promoted memories grounds them on episodic nodes
-  // (graph.insert links semantic/procedural to this trajectory) and gives the
-  // Sessions view a per-session log. Inserted even if nothing was promoted, so
-  // the episodic substrate is reliable.
-  const episodic = episodicSteps.length
-    ? [
-        episodicSteps.map((s) => ({
-          observation: s.observation,
-          action: s.action,
-          subgoal: "",
-          state: "",
-          reward: "",
-        })),
-      ]
-    : undefined;
+  // Episodic substrate: the session trajectory, split into subgoal segments
+  // (one trajectory per user-request unit). Inserting it grounds the promoted
+  // memories on their own segment — graph.insert chains consecutive steps into
+  // a sequence and links each procedural to its trajectory_num — and powers the
+  // Sessions view. Inserted even if nothing was promoted, so the substrate is
+  // reliable. Indexed by absolute segment so trajectory_num lines up.
+  let episodic: EpisodicStep[][] | undefined;
+  if (episodicSteps.length) {
+    const maxSeg = episodicSteps.reduce((m, s) => Math.max(m, s.segment), 0);
+    episodic = [];
+    for (let seg = 0; seg <= maxSeg; seg++) {
+      episodic.push(
+        episodicSteps
+          .filter((s) => s.segment === seg)
+          .map((s) => ({
+            observation: s.observation,
+            action: s.action,
+            subgoal: "",
+            state: "",
+            reward: "",
+          })),
+      );
+    }
+  }
 
   if (!semantic.length && !procedural.length && !episodic) return;
 
@@ -334,10 +362,13 @@ async function runPromotionGate(
       ...(semantic.length ? { semantic } : {}),
       ...(procedural.length ? { procedural } : {}),
     });
+    const episodicCount = episodic
+      ? episodic.reduce((n, seg) => n + seg.length, 0)
+      : 0;
     runtime.log(
-      `promotion-gate: inserted ${semantic.length} semantic + ${procedural.length} procedural + ${
-        episodic ? episodic[0].length : 0
-      } episodic into ${graphId} (session ${sessionId})`,
+      `promotion-gate: inserted ${semantic.length} semantic + ${procedural.length} procedural + ${episodicCount} episodic across ${
+        episodic ? episodic.length : 0
+      } segment(s) into ${graphId} (session ${sessionId})`,
     );
   } catch (err) {
     if (err instanceof PlugMemError) {
