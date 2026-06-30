@@ -50,16 +50,17 @@ export interface ResolvedConfig {
 }
 
 export function resolveConfig(raw: PlugMemPluginConfig): ResolvedConfig {
+  const rawBaseUrl = raw?.baseUrl || "http://localhost:8080";
   return {
-    baseUrl: raw.baseUrl.replace(/\/+$/, ""),
-    apiKey: raw.apiKey,
-    defaultGraphId: raw.defaultGraphId,
-    sharedReadGraphIds: raw.sharedReadGraphIds ?? [],
-    timeoutMs: raw.timeoutMs ?? DEFAULTS.timeoutMs,
-    maxRetries: raw.maxRetries ?? DEFAULTS.maxRetries,
+    baseUrl: rawBaseUrl.replace(/\/+$/, ""),
+    apiKey: raw?.apiKey,
+    defaultGraphId: raw?.defaultGraphId,
+    sharedReadGraphIds: raw?.sharedReadGraphIds ?? [],
+    timeoutMs: raw?.timeoutMs ?? DEFAULTS.timeoutMs,
+    maxRetries: raw?.maxRetries ?? DEFAULTS.maxRetries,
     autoRemember:
-      raw.autoRemember === false
+      raw?.autoRemember === false
         ? false
-        : { ...AUTO_REMEMBER_DEFAULTS, ...raw.autoRemember },
+        : { ...AUTO_REMEMBER_DEFAULTS, ...raw?.autoRemember },
   };
 }

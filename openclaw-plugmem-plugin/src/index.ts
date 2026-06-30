@@ -1,4 +1,5 @@
 import { Type } from "@sinclair/typebox";
+import { definePluginEntry } from "openclaw/plugin-sdk/plugin-entry";
 import { PlugMemClient } from "./client.js";
 import type { PlugMemPluginConfig, ResolvedConfig } from "./config.js";
 import { resolveConfig } from "./config.js";
@@ -13,10 +14,9 @@ import type {
 // Minimal interfaces matching the OpenClaw plugin-sdk API.
 // When the real SDK is installed these are satisfied by its exports.
 
-interface ContentBlock {
-  type: string;
-  text?: string;
-}
+type ContentBlock =
+  | { type: "text"; text: string }
+  | { type: "image"; data: string; mimeType: string };
 
 interface ToolDefinition {
   name: string;
@@ -108,11 +108,11 @@ export * from "./types.js";
 
 // ── Tool helpers ─────────────────────────────────────────────────────
 
-function textContent(text: string): { content: ContentBlock[] } {
-  return { content: [{ type: "text", text }] };
+function textContent(text: string): { content: ContentBlock[]; details: any } {
+  return { content: [{ type: "text", text }], details: null };
 }
 
-function errorContent(err: unknown): { content: ContentBlock[] } {
+function errorContent(err: unknown): { content: ContentBlock[]; details: any } {
   const plugMemErr = err as PlugMemError;
   if (plugMemErr.statusCode) {
     return textContent(
@@ -361,27 +361,26 @@ async function readSessionFile(
 
 // ── Plugin definition ────────────────────────────────────────────────
 
-export function createPlugMemPlugin(config: PlugMemPluginConfig): PluginEntry {
-  const resolved = resolveConfig(config);
-  const client = new PlugMemClient(config);
-  const defaultGraphId = resolved.defaultGraphId;
+const plugin: ReturnType<typeof definePluginEntry> = definePluginEntry({
+  id: "plugmem",
+  name: "PlugMem",
+  description:
+    "Long-term memory for LLM agents — store and recall experiences across sessions",
+  kind: "memory",
+  register(api) {
+    const config = (api.pluginConfig ?? api.config) as PlugMemPluginConfig;
+    const resolved = resolveConfig(config);
+    const client = new PlugMemClient(config);
+    const defaultGraphId = resolved.defaultGraphId;
 
-  // Captured from hook contexts so `plugmem.remember` calls — which only
-  // see params, not the OpenClaw context — can auto-attach the active
-  // session id. Updated whenever any hook we listen on fires.
-  let lastSeenSessionId: string | undefined;
-
-  return {
-    id: "plugmem",
-    name: "PlugMem",
-    description:
-      "Long-term memory for LLM agents — store and recall experiences across sessions",
-    version: "0.1.0",
-
-    activate(api: OpenClawPluginApi) {
+    // Captured from hook contexts so `plugmem.remember` calls — which only
+    // see params, not the OpenClaw context — can auto-attach the active
+    // session id. Updated whenever any hook we listen on fires.
+    let lastSeenSessionId: string | undefined;
       // ── plugmem.remember ─────────────────────────────────────────
       api.registerTool({
         name: "plugmem.remember",
+        label: "Remember",
         description:
           "Store information in long-term memory. Accepts either free-text " +
           "(stored as a semantic memory with optional tags) or a full " +
@@ -430,7 +429,7 @@ export function createPlugMemPlugin(config: PlugMemPluginConfig): PluginEntry {
           ),
         }),
 
-        async execute(_id, params) {
+        async execute(_id, params: any) {
           try {
             const graphId = requireGraphId(params, defaultGraphId);
             const sessionId =
@@ -483,6 +482,7 @@ export function createPlugMemPlugin(config: PlugMemPluginConfig): PluginEntry {
       // ── plugmem.recall ───────────────────────────────────────────
       api.registerTool({
         name: "plugmem.recall",
+        label: "Recall",
         description:
           "Retrieve relevant memories from long-term storage. Returns " +
           "LLM-synthesized reasoning over the most relevant memories " +
@@ -523,7 +523,7 @@ export function createPlugMemPlugin(config: PlugMemPluginConfig): PluginEntry {
           ),
         }),
 
-        async execute(_id, params) {
+        async execute(_id, params: any) {
           try {
             const primaryGraphId = requireGraphId(params, defaultGraphId);
             const readGraphIds = dedupe([
@@ -584,12 +584,12 @@ export function createPlugMemPlugin(config: PlugMemPluginConfig): PluginEntry {
       if (resolved.autoRemember !== false) {
         // Before session reset (/new, /reset) — capture the full session
         if (resolved.autoRemember.onSessionReset) {
-          api.on("before_reset", async (event, ctx) => {
+          api.on("before_reset", async (event: any, ctx: any) => {
             if (ctx?.sessionId) lastSeenSessionId = ctx.sessionId;
             await autoRemember(
               client,
               resolved,
-              event.messages,
+              event.messages as SessionMessage[],
               "session_reset",
               ctx?.sessionId,
             );
@@ -600,10 +600,10 @@ export function createPlugMemPlugin(config: PlugMemPluginConfig): PluginEntry {
         // Note: current OpenClaw versions don't populate event.messages for
         // this hook, so we fall back to reading the JSONL session file.
         if (resolved.autoRemember.onCompaction) {
-          api.on("before_compaction", async (event, ctx) => {
+          api.on("before_compaction", async (event: any, ctx: any) => {
             if (ctx?.sessionId) lastSeenSessionId = ctx.sessionId;
             const messages =
-              event.messages ?? (await readSessionFile(event.sessionFile));
+              (event.messages as SessionMessage[]) ?? (await readSessionFile(event.sessionFile as string));
             await autoRemember(
               client,
               resolved,
@@ -614,9 +614,9 @@ export function createPlugMemPlugin(config: PlugMemPluginConfig): PluginEntry {
           });
         }
       }
-    },
-  };
-}
+      return plugin;
+  },
+});
 
 // ── Utility ──────────────────────────────────────────────────────────
 
@@ -664,6 +664,4 @@ function formatFanOut<T extends RetrieveResponse | ReasonResponse>(
     .join("\n\n---\n\n");
 }
 
-// ── Default export for OpenClaw plugin loader ────────────────────────
-
-export default createPlugMemPlugin;
+export default plugin;
