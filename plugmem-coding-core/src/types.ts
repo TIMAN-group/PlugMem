@@ -36,6 +36,10 @@ export interface SemanticMemoryInput {
   tags?: string[];
   source?: MemorySourceWire;
   confidence?: number;
+  /** Index into the `episodic` trajectory list this fact is grounded on. */
+  trajectory_num?: number;
+  /** Step index within that segment; omit to ground on the whole segment. */
+  turn_num?: number;
 }
 
 export interface ProceduralMemoryInput {
@@ -44,6 +48,9 @@ export interface ProceduralMemoryInput {
   return?: number;
   source?: MemorySourceWire;
   confidence?: number;
+  /** Index into the `episodic` trajectory list this experience came from —
+   *  grounds the procedural node on that split sub-sequence. */
+  trajectory_num?: number;
 }
 
 export interface EpisodicStep {
@@ -63,6 +70,8 @@ export interface TrajectoryInsertRequest {
 
 export interface StructuredInsertRequest {
   mode: "structured";
+  /** Stamps every inserted node with this id (groups them in the Sessions view). */
+  session_id?: string;
   episodic?: EpisodicStep[][];
   semantic?: SemanticMemoryInput[];
   procedural?: ProceduralMemoryInput[];
@@ -87,6 +96,8 @@ export interface RetrieveRequest {
   mode?: "semantic_memory" | "episodic_memory" | "procedural_memory" | null;
   min_confidence?: number;
   source_in?: MemorySourceWire[];
+  /** Logs this recall against the given session id (Sessions timeline). */
+  session_id?: string;
 }
 
 export interface RetrieveResponse {
@@ -123,7 +134,13 @@ export interface HealthResponse {
 
 // ── Promotion-gate extraction ───────────────────────────────────────
 
-export type CandidateKindWire = "failure_delta" | "correction" | "episodic";
+// Candidate kinds the server's /extract endpoint accepts on the wire.
+// MUST match plugmem/api/schemas.py:CandidateKind. The in-memory detector
+// vocabulary (promotion.ts:CandidateKind) is a SUPERSET — kinds without a
+// server insert path (e.g. "episodic") are filtered out before /extract,
+// because the endpoint validates the whole batch atomically and a single
+// unknown kind 422s every candidate in the request.
+export type CandidateKindWire = "failure_delta" | "correction";
 
 export interface CandidateWire {
   kind: CandidateKindWire;

@@ -16,7 +16,7 @@ class EpisodicNode:
     __slots__ = (
         "episodic_id", "observation", "action", "time",
         "session_id", "subgoal", "state", "reward",
-        "semantic_nodes",
+        "next_episodic_id", "semantic_nodes",
     )
 
     def __init__(
@@ -29,6 +29,7 @@ class EpisodicNode:
         subgoal: str = "",
         state: str = "",
         reward: str = "",
+        next_episodic_id: Optional[int] = None,
     ):
         self.episodic_id = episodic_id
         self.observation = observation
@@ -38,6 +39,10 @@ class EpisodicNode:
         self.subgoal = subgoal
         self.state = state
         self.reward = reward
+        # Forward link to the next step in the same trajectory segment. None
+        # for the last step of a segment — the chain breaks at segment
+        # boundaries so each procedural's grounded sequence stays distinct.
+        self.next_episodic_id = next_episodic_id
         self.semantic_nodes: List[SemanticNode] = []
 
     def get_episodic_memory(self, date: bool = True) -> str:

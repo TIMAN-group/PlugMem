@@ -60,7 +60,7 @@ class HTTPEmbeddingClient(EmbeddingClient):
 
     def embed(self, text: str) -> List[float]:
         text = text[: self.max_text_len]
-        headers = {"Content-Type": "application/json"}
+        headers = {"Content-Type": "application/json", "ngrok-skip-browser-warning": "true"}
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
         data = {"model": self.model, "input": text}
@@ -86,7 +86,7 @@ class HTTPEmbeddingClient(EmbeddingClient):
         if not texts:
             return []
         cleaned = [t[: self.max_text_len] for t in texts]
-        headers = {"Content-Type": "application/json"}
+        headers = {"Content-Type": "application/json", "ngrok-skip-browser-warning": "true"}
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
         data = {"model": self.model, "input": cleaned}

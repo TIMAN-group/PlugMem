@@ -59,6 +59,20 @@ class SemanticMemoryInput(BaseModel):
     )
     source: Optional[MemorySource] = None
     confidence: float = Field(0.5, ge=0.0, le=1.0)
+    trajectory_num: Optional[int] = Field(
+        None,
+        description=(
+            "Index into the `episodic` trajectory list this fact is grounded "
+            "on. Used to ground the semantic node on its own episodic segment."
+        ),
+    )
+    turn_num: Optional[int] = Field(
+        None,
+        description=(
+            "Step index within the chosen trajectory segment. If omitted, the "
+            "fact is grounded on the whole segment."
+        ),
+    )
 
 
 class ProceduralMemoryInput(BaseModel):
@@ -71,6 +85,14 @@ class ProceduralMemoryInput(BaseModel):
     )
     source: Optional[MemorySource] = None
     confidence: float = Field(0.5, ge=0.0, le=1.0)
+    trajectory_num: Optional[int] = Field(
+        None,
+        description=(
+            "Index into the `episodic` trajectory list this experience came "
+            "from. Grounds the procedural node on that episodic segment "
+            "(the split sub-sequence) instead of the whole trajectory."
+        ),
+    )
 
     model_config = {"populate_by_name": True}
 

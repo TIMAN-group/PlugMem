@@ -28,6 +28,7 @@ const EDGE_KINDS = [
   { kind: "evidenced_by",  label: "evidenced by" },
   { kind: "grouped_by",    label: "grouped by" },
   { kind: "from_session",  label: "from session" },
+  { kind: "next",          label: "next step" },
 ];
 
 function readVar(name) {
@@ -103,6 +104,7 @@ function buildStylesheet() {
     { selector: "edge.evidenced_by", style: { "line-color": c.episodic,   "target-arrow-color": c.episodic,   "line-style": "dotted" } },
     { selector: "edge.grouped_by",   style: { "line-color": c.subgoal,    "target-arrow-color": c.subgoal,    "line-style": "solid"  } },
     { selector: "edge.from_session", style: { "line-color": c.episodic,   "target-arrow-color": c.episodic,   "line-style": "dotted" } },
+    { selector: "edge.next",         style: { "line-color": c.episodic,   "target-arrow-color": c.episodic,   "line-style": "solid", "width": 1.5, "arrow-scale": 1 } },
     {
       selector: "node.dim, edge.dim",
       style: { "opacity": 0.08 },
@@ -216,6 +218,7 @@ export function mountGraph({ container, getGraphId, toast, onTheme }) {
     evidenced_by:  { color: "--node-episodic", style: "dotted" },
     grouped_by:    { color: "--node-subgoal",  style: "solid"  },
     from_session:  { color: "--node-episodic", style: "dotted" },
+    next:          { color: "--node-episodic", style: "solid"  },
   };
 
   function renderLegend() {
