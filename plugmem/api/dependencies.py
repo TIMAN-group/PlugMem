@@ -48,6 +48,8 @@ def _load_dotenv_once() -> None:
                     continue
                 key, _, val = line.partition("=")
                 key = key.strip()
+                if key.startswith("export "):
+                    key = key[7:].strip()
                 if key:
                     os.environ.setdefault(key, val.strip().strip('"').strip("'"))
         except Exception:

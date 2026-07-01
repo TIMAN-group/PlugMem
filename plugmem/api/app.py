@@ -9,6 +9,12 @@ from fastapi import FastAPI
 from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
+import sys
+import asyncio
+
+if sys.platform == "win32":
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+
 from plugmem import __version__
 from plugmem.api.routes import demo, inspector, extract, graphs, health, memories, retrieval
 

@@ -42,6 +42,8 @@ class FakeLLM(LLMClient):
         # Return plausible plan/tags
         if "tag" in last_msg.lower() or "plan" in last_msg.lower():
             return '{"next_subgoal": "test goal", "query_tags": ["tag1"]}'
+        if "redundant" in last_msg.lower() or "merge" in last_msg.lower() or "new content" in last_msg.lower():
+            return '{"simple_reasoning": "identical", "relationship": "UPDATE_SAME_FACT", "merged_statement": "The server runs on port 8000.", "deactivate_earlier": true, "deactivate_later": true}'
         return "test response"
 
 

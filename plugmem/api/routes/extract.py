@@ -28,6 +28,8 @@ async def extract(body: ExtractRequest) -> ExtractResponse:
         return ExtractResponse(memories=[])
 
     candidates = [{"kind": c.kind, "window": c.window} for c in body.candidates]
+    logger.info("extract: received %d candidates", len(candidates))
+    print(f"EXTRACT REQUEST: {len(candidates)} candidates", flush=True)
     llm = get_llm()
     raw = extract_coding_memories(llm, candidates)
 
@@ -38,4 +40,8 @@ async def extract(body: ExtractRequest) -> ExtractResponse:
         except Exception as e:  # noqa: BLE001 — log and skip malformed
             logger.info("extract: dropping invalid memory %r: %s", m, e)
 
+    logger.info("extract: returning %d memories", len(memories))
+    for mem in memories:
+        logger.info("  -> type=%s, source=%s, confidence=%s", mem.type, mem.source, mem.confidence)
+    print(f"EXTRACT RESULT: {len(memories)} memories", flush=True)
     return ExtractResponse(memories=memories)
