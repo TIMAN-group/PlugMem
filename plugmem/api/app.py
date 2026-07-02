@@ -9,14 +9,8 @@ from fastapi import FastAPI
 from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
-import sys
-import asyncio
-
-if sys.platform == "win32":
-    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
-
 from plugmem import __version__
-from plugmem.api.routes import demo, inspector, extract, graphs, health, memories, retrieval
+from plugmem.api.routes import demo, inspector, extract, graphs, health, memories, retrieval, diagnostics
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +24,11 @@ class RequestLoggingMiddleware:
         self.app = app
 
     async def __call__(self, scope, receive, send):
-        if scope["type"] != "http" or not scope["path"].startswith("/api/v1"):
+        if (
+            scope["type"] != "http"
+            or not scope["path"].startswith("/api/v1")
+            or "/diagnostics" in scope["path"]
+        ):
             await self.app(scope, receive, send)
             return
 
@@ -137,6 +135,7 @@ def create_app() -> FastAPI:
     app.include_router(extract.router, prefix="/api/v1")
     app.include_router(inspector.router, prefix="/api/v1")
     app.include_router(demo.router, prefix="/api/v1")
+    app.include_router(diagnostics.router, prefix="/api/v1")
 
     # Memory Inspector — static SPA mounted at /inspector/
     inspector_dir = _STATIC_DIR / "inspector"
