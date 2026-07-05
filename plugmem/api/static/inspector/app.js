@@ -216,9 +216,15 @@ async function onGraphChange(gid) {
   state.graphId = gid || null;
   writeUrl();
   await loadStats();
+
+  // Reset loaded status for other tabs so they refresh when clicked
+  graphHasLoaded = (state.tab === "graph");
+  sessionsHasLoaded = (state.tab === "sessions");
+  diagnosticsHasLoaded = (state.tab === "diagnostics");
+
   refreshBrowse();
   refreshRecall();
-  refreshGraph();
+  if (state.tab === "graph") refreshGraph();
   if (state.tab === "sessions") refreshSessions();
   if (state.tab === "diagnostics") refreshDiagnostics();
 }
