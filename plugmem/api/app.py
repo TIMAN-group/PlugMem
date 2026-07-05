@@ -8,9 +8,10 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.middleware.base import BaseHTTPMiddleware
 
 from plugmem import __version__
-from plugmem.api.routes import demo, inspector, extract, graphs, health, memories, retrieval
+from plugmem.api.routes import demo, inspector, extract, graphs, health, memories, retrieval, diagnostics
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +25,11 @@ class RequestLoggingMiddleware:
         self.app = app
 
     async def __call__(self, scope, receive, send):
-        if scope["type"] != "http" or not scope["path"].startswith("/api/v1"):
+        if (
+            scope["type"] != "http"
+            or not scope["path"].startswith("/api/v1")
+            or "/diagnostics" in scope["path"]
+        ):
             await self.app(scope, receive, send)
             return
 
@@ -106,6 +111,16 @@ class RequestLoggingMiddleware:
                 pass
 
 
+class NoCacheMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request, call_next):
+        response = await call_next(request)
+        if request.url.path.startswith("/inspector"):
+            response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+            response.headers["Pragma"] = "no-cache"
+            response.headers["Expires"] = "0"
+        return response
+
+
 def create_app() -> FastAPI:
     """Build and return the PlugMem FastAPI application."""
 
@@ -122,6 +137,7 @@ def create_app() -> FastAPI:
     )
 
     app.add_middleware(RequestLoggingMiddleware)
+    app.add_middleware(NoCacheMiddleware)
 
     # Mount route modules under /api/v1
     app.include_router(health.router, prefix="/api/v1")
@@ -131,6 +147,7 @@ def create_app() -> FastAPI:
     app.include_router(extract.router, prefix="/api/v1")
     app.include_router(inspector.router, prefix="/api/v1")
     app.include_router(demo.router, prefix="/api/v1")
+    app.include_router(diagnostics.router, prefix="/api/v1")
 
     # Memory Inspector — static SPA mounted at /inspector/
     inspector_dir = _STATIC_DIR / "inspector"

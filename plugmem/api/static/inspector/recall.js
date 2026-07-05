@@ -1,6 +1,6 @@
 // Recall-trace tab: submit observation/tags/mode → render full retrieval trace.
 
-import { api } from "./api.js";
+import { api } from "./api.js?v=5";
 
 export function mountRecall({ container, getGraphId, toast }) {
   const els = {

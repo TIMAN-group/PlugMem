@@ -83,4 +83,6 @@ export const api = {
       "GET",
       `/graphs/${encodeURIComponent(gid)}/sessions/${encodeURIComponent(sessionId)}`,
     ),
+  getDiagnosticsLogs: (limit, graphId) => request("GET", "/diagnostics/logs", { query: { limit, graph_id: graphId } }),
+  getDiagnosticsStats: (graphId) => request("GET", "/diagnostics/stats", { query: { graph_id: graphId } }),
 };

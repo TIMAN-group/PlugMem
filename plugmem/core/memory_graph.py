@@ -50,7 +50,7 @@ logger = logging.getLogger(__name__)
 
 # The memory types PlugMem can retrieve. Type selection is PlugMem's job
 # (via get_mode); a request may override it, but only with one of these.
-_VALID_MODES = ("semantic_memory", "episodic_memory", "procedural_memory")
+_VALID_MODES = ("semantic_memory", "episodic_memory", "procedural_memory", "combined")
 
 
 def _normalize_mode(mode: Any, default: str = "semantic_memory") -> str:
@@ -428,6 +428,27 @@ class MemoryGraph:
             if not sem_str:
                 continue
 
+            embedding = sem_emb_item["semantic_memory"]
+            if isinstance(embedding, np.ndarray):
+                embedding = embedding.tolist()
+
+            is_duplicate = False
+            for existing in self.semantic_nodes:
+                existing_emb = existing.embedding
+                if isinstance(existing_emb, np.ndarray):
+                    existing_emb = existing_emb.tolist()
+                similarity = get_similarity(embedding, existing_emb)
+                if similarity >= 0.85:
+                    logger.debug(
+                        f"Skipping duplicate semantic memory (similarity={similarity:.3f}): "
+                        f"{sem_str[:100]!r}"
+                    )
+                    is_duplicate = True
+                    break
+
+            if is_duplicate:
+                continue
+
             sem_id = len(self.semantic_nodes)
             sem_node = SemanticNode(
                 semantic_id=sem_id,
@@ -529,6 +550,25 @@ class MemoryGraph:
             subgoal_str = proc_item["subgoal"]
             subgoal_embedding = proc_emb_item["subgoal"]
             proc_embedding = self.embedder.embed(proc_str)
+
+            proc_emb_list = proc_embedding if isinstance(proc_embedding, list) else proc_embedding.tolist() if isinstance(proc_embedding, np.ndarray) else proc_embedding
+
+            is_duplicate = False
+            for existing in self.procedural_nodes:
+                existing_emb = existing.embedding
+                if isinstance(existing_emb, np.ndarray):
+                    existing_emb = existing_emb.tolist()
+                similarity = get_similarity(proc_emb_list, existing_emb)
+                if similarity >= 0.85:
+                    logger.debug(
+                        f"Skipping duplicate procedural memory (similarity={similarity:.3f}): "
+                        f"{proc_str[:100]!r}"
+                    )
+                    is_duplicate = True
+                    break
+
+            if is_duplicate:
+                continue
 
             # Find or create subgoal
             subgoal_node = self.subgoal2node.get(subgoal_str)
@@ -1053,7 +1093,7 @@ class MemoryGraph:
             prompt_template = fallback_cls()
 
         semantic_nodes, procedural_nodes = [], []
-        if mode in ["semantic_memory", "episodic_memory"]:
+        if mode in ["semantic_memory", "episodic_memory", "combined"]:
             semantic_nodes = self.retrieve_semantic_nodes(
                 semantic_memory={"semantic_memory": observation, "tags": query_tags},
                 value_func_tag=tag_relevant if tag_relevant is not None else self.tag_relevant,
@@ -1061,7 +1101,7 @@ class MemoryGraph:
                 min_confidence=min_confidence,
                 source_in=source_in,
             )
-        if mode in ["procedural_memory", "episodic_memory"]:
+        if mode in ["procedural_memory", "episodic_memory", "combined"]:
             procedural_nodes = self.retrieve_procedural_nodes(
                 subgoal=next_subgoal,
                 value_func_subgoal=subgoal_relevant if subgoal_relevant is not None else self.subgoal_relevant,
@@ -1074,25 +1114,25 @@ class MemoryGraph:
         procedural_memory_str = ""
         episodic_memory_str = ""
 
-        if mode == "episodic_memory":
+        if mode in ["episodic_memory", "combined"]:
             episodic_memory_str = self.retrieve_episodic_nodes(
                 observation=observation,
                 min_confidence=min_confidence,
                 source_in=source_in,
             )
-        elif mode == "semantic_memory":
+        if mode in ["semantic_memory", "combined"]:
             if not semantic_nodes:
                 semantic_memory_str = "No relevant fact"
             else:
                 for i, sn in enumerate(semantic_nodes):
                     semantic_memory_str += f"Fact {i} (Sem Node {sn.semantic_id}): {sn.get_semantic_memory()}\n"
-        elif mode == "procedural_memory":
+        if mode in ["procedural_memory", "combined"]:
             if not procedural_nodes:
                 procedural_memory_str = "No relevant experiences"
             else:
                 for i, pn in enumerate(procedural_nodes):
                     procedural_memory_str += f"Experience {i} (Proc Node {pn.procedural_id}): {pn.get_procedural_memory()}\n"
-        else:
+        if mode not in ["episodic_memory", "semantic_memory", "procedural_memory", "combined"]:
             raise ValueError(f"Invalid mode: {mode}")
 
         variables = {

@@ -6,7 +6,7 @@
 //   memory type — capped at OFFICE_PER_ROOM items each so the visual stays
 //   sparse and pixel-readable.
 
-import { api } from "./api.js";
+import { api } from "./api.js?v=5";
 
 const NODE_TYPES = ["semantic", "procedural", "tag", "subgoal", "episodic"];
 // SVG connector lines between selected and related desks. Disabled

@@ -36,6 +36,7 @@
     <button class="tab" data-tab="recall" role="tab">Recall trace</button>
     <button class="tab" data-tab="graph" role="tab">Graph</button>
     <button class="tab" data-tab="sessions" role="tab">Sessions</button>
+    <button class="tab" data-tab="diagnostics" role="tab">Diagnostics</button>
   </nav>
 
   <div id="toast" class="toast" hidden></div>
@@ -189,9 +190,49 @@
         </aside>
       </section>
     </section>
+    <section id="tab-diagnostics" class="tab-panel" role="tabpanel" hidden>
+      <aside class="sidebar diagnostics-sidebar">
+        <div class="form-row">
+          <span class="form-label">Diagnostics Summary</span>
+          <div id="diag-summary" class="diag-summary-list">
+            <!-- Widgets loaded dynamically -->
+          </div>
+        </div>
+        <div class="form-row btn-row">
+          <button id="diag-refresh" class="btn btn-primary">Refresh Logs</button>
+        </div>
+      </aside>
+      <section class="content split">
+        <div class="table-wrap">
+          <table class="node-table">
+            <thead>
+              <tr>
+                <th>Timestamp</th>
+                <th>Method</th>
+                <th>Endpoint</th>
+                <th>Status</th>
+                <th>Latency</th>
+                <th>Tokens</th>
+              </tr>
+            </thead>
+            <tbody id="diag-tbody">
+              <!-- Logs loaded dynamically -->
+            </tbody>
+          </table>
+          <div id="diag-empty" class="empty" hidden>No request logs available.</div>
+        </div>
+        <aside id="diag-detail" class="detail-panel" hidden>
+          <div class="detail-header">
+            <span id="diag-detail-title" class="detail-title">Request Detail</span>
+            <button id="diag-detail-close" class="btn btn-ghost" aria-label="Close">×</button>
+          </div>
+          <div id="diag-detail-body" class="detail-body"></div>
+        </aside>
+      </section>
+    </section>
   </main>
 
   <script src="https://unpkg.com/cytoscape@3.30.4/dist/cytoscape.min.js"></script>
-  <script type="module" src="app.js"></script>
+  <script type="module" src="app.js?v=5"></script>
 </body>
 </html>

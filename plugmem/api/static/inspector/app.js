@@ -4,13 +4,14 @@
 //   ?graph=<id>&tab=<browse|recall|graph>&theme=<default|...>
 // so refreshing or sharing a link preserves view.
 
-import { api, getApiKey, setApiKey } from "./api.js";
-import { mountBrowse } from "./browse.js";
-import { mountRecall } from "./recall.js";
-import { mountGraph } from "./graph.js";
-import { mountSessions } from "./sessions.js";
+import { api, getApiKey, setApiKey } from "./api.js?v=5";
+import { mountBrowse } from "./browse.js?v=5";
+import { mountRecall } from "./recall.js?v=5";
+import { mountGraph } from "./graph.js?v=5";
+import { mountSessions } from "./sessions.js?v=5";
+import { mountDiagnostics } from "./diagnostics.js?v=5";
 
-const TABS = ["browse", "recall", "graph", "sessions"];
+const TABS = ["browse", "recall", "graph", "sessions", "diagnostics"];
 const DEFAULT_TAB = "browse";
 
 const state = {
@@ -32,6 +33,7 @@ const els = {
     recall: document.getElementById("tab-recall"),
     graph: document.getElementById("tab-graph"),
     sessions: document.getElementById("tab-sessions"),
+    diagnostics: document.getElementById("tab-diagnostics"),
   },
   toast: document.getElementById("toast"),
   apiKeyBtn: document.getElementById("api-key-btn"),
@@ -112,10 +114,17 @@ function selectTab(name) {
       refreshSessions();
     }
   }
+  if (name === "diagnostics" && diagnosticsHandle) {
+    if (!diagnosticsHasLoaded) {
+      diagnosticsHasLoaded = true;
+      refreshDiagnostics();
+    }
+  }
 }
 
 let graphHasLoaded = false;
 let sessionsHasLoaded = false;
+let diagnosticsHasLoaded = false;
 
 function renderStats(stats) {
   if (!stats) {
@@ -182,6 +191,7 @@ let browseHandle = null;
 let recallHandle = null;
 let graphHandle = null;
 let sessionsHandle = null;
+let diagnosticsHandle = null;
 function refreshBrowse() {
   if (!browseHandle) return;
   browseHandle.refresh({ graphId: state.graphId });
@@ -198,15 +208,26 @@ function refreshSessions() {
   if (!sessionsHandle) return;
   sessionsHandle.refresh({ graphId: state.graphId });
 }
+function refreshDiagnostics() {
+  if (!diagnosticsHandle) return;
+  diagnosticsHandle.refresh({ graphId: state.graphId });
+}
 
 async function onGraphChange(gid) {
   state.graphId = gid || null;
   writeUrl();
   await loadStats();
+
+  // Reset loaded status for other tabs so they refresh when clicked
+  graphHasLoaded = (state.tab === "graph");
+  sessionsHasLoaded = (state.tab === "sessions");
+  diagnosticsHasLoaded = (state.tab === "diagnostics");
+
   refreshBrowse();
   refreshRecall();
-  refreshGraph();
+  if (state.tab === "graph") refreshGraph();
   if (state.tab === "sessions") refreshSessions();
+  if (state.tab === "diagnostics") refreshDiagnostics();
 }
 
 function bindControls() {
@@ -269,6 +290,10 @@ async function boot() {
   sessionsHandle = mountSessions({
     container: els.tabPanels.sessions,
     getGraphId: () => state.graphId,
+    toast,
+  });
+  diagnosticsHandle = mountDiagnostics({
+    container: els.tabPanels.diagnostics,
     toast,
   });
 
