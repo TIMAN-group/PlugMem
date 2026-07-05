@@ -5,7 +5,7 @@
 // with matching session_id). Recalls come from the per-graph recall_audit
 // collection. The /sessions/{id} endpoint merges them server-side.
 
-import { api } from "./api.js";
+import { api } from "./api.js?v=5";
 
 export function mountSessions({ container, getGraphId, toast }) {
   const els = {

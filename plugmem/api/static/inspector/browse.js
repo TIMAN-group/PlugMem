@@ -1,6 +1,6 @@
 // Browse tab: type chips, search, table, side panel, deactivation.
 
-import { api } from "./api.js";
+import { api } from "./api.js?v=5";
 
 const NODE_TYPES = ["semantic", "procedural", "tag", "subgoal", "episodic"];
 

@@ -4,12 +4,12 @@
 //   ?graph=<id>&tab=<browse|recall|graph>&theme=<default|...>
 // so refreshing or sharing a link preserves view.
 
-import { api, getApiKey, setApiKey } from "./api.js";
-import { mountBrowse } from "./browse.js";
-import { mountRecall } from "./recall.js";
-import { mountGraph } from "./graph.js";
-import { mountSessions } from "./sessions.js";
-import { mountDiagnostics } from "./diagnostics.js";
+import { api, getApiKey, setApiKey } from "./api.js?v=5";
+import { mountBrowse } from "./browse.js?v=5";
+import { mountRecall } from "./recall.js?v=5";
+import { mountGraph } from "./graph.js?v=5";
+import { mountSessions } from "./sessions.js?v=5";
+import { mountDiagnostics } from "./diagnostics.js?v=5";
 
 const TABS = ["browse", "recall", "graph", "sessions", "diagnostics"];
 const DEFAULT_TAB = "browse";
@@ -191,6 +191,7 @@ let browseHandle = null;
 let recallHandle = null;
 let graphHandle = null;
 let sessionsHandle = null;
+let diagnosticsHandle = null;
 function refreshBrowse() {
   if (!browseHandle) return;
   browseHandle.refresh({ graphId: state.graphId });

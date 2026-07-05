@@ -1,4 +1,4 @@
-import { api } from "./api.js";
+import { api } from "./api.js?v=5";
 
 export function mountDiagnostics({ container, toast }) {
   const els = {

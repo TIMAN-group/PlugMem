@@ -8,6 +8,7 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.middleware.base import BaseHTTPMiddleware
 
 from plugmem import __version__
 from plugmem.api.routes import demo, inspector, extract, graphs, health, memories, retrieval, diagnostics
@@ -110,6 +111,16 @@ class RequestLoggingMiddleware:
                 pass
 
 
+class NoCacheMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request, call_next):
+        response = await call_next(request)
+        if request.url.path.startswith("/inspector"):
+            response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+            response.headers["Pragma"] = "no-cache"
+            response.headers["Expires"] = "0"
+        return response
+
+
 def create_app() -> FastAPI:
     """Build and return the PlugMem FastAPI application."""
 
@@ -126,6 +137,7 @@ def create_app() -> FastAPI:
     )
 
     app.add_middleware(RequestLoggingMiddleware)
+    app.add_middleware(NoCacheMiddleware)
 
     # Mount route modules under /api/v1
     app.include_router(health.router, prefix="/api/v1")
