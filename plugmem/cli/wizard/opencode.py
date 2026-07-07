@@ -1,0 +1,304 @@
+"""OpenCode integration flow for the setup wizard."""
+from __future__ import annotations
+
+import json
+import os
+import re
+import shutil
+import subprocess
+import urllib.request
+import urllib.error
+from pathlib import Path
+from urllib.parse import urlparse
+
+from plugmem.cli.config import PlugmemConfig
+from plugmem.cli.wizard.ui import error, header, info, prompt_action, prompt_choice, prompt_text, success, warn
+
+
+def run_opencode_section(cfg: PlugmemConfig) -> None:
+    header("OpenCode Integration")
+
+    integrate = prompt_choice(
+        "Would you like to integrate this instance with an OpenCode project workspace?",
+        choices=["yes", "no"],
+        default="yes",
+    )
+    if integrate == "no":
+        return
+
+    # 1. Ask for workspace directory
+    project_dir = ""
+    while True:
+        project_dir = prompt_text("Enter the absolute path to your coding project folder", default="./")
+        path = Path(project_dir).resolve()
+        if path.is_dir():
+            project_dir = str(path)
+            break
+        error(f"Directory '{project_dir}' does not exist. Please enter a valid path.")
+
+    # Find repo root
+    # wizard -> cli -> plugmem -> repo_root
+    repo_root = Path(__file__).resolve().parent.parent.parent.parent
+    plugin_dir = repo_root / "plugmem-coding-opencode"
+
+    # 2. Verify dependencies and build the plugin
+    while True:
+        if not plugin_dir.is_dir():
+            error(f"Plugin directory not found at {plugin_dir}. Cannot build plugin.")
+            action = prompt_action("Plugin directory missing. What now?")
+            if action == "skip":
+                warn("Skipping OpenCode integration.")
+                return
+            continue
+
+        # Check if already built and ask to rebuild
+        dist_js = plugin_dir / "dist" / "index.js"
+        rebuild = "yes"
+        if dist_js.exists():
+            rebuild = prompt_choice(
+                "OpenCode plugin is already built. Rebuild it?",
+                choices=["yes", "no"],
+                default="no",
+            )
+
+        if rebuild == "no":
+            success("Skipped rebuilding OpenCode plugin (using existing build).")
+            break
+
+        # Verify Node.js and npm
+        info("Verifying system dependencies (Node.js, npm, Git)...")
+        if not _check_command(["node", "-v"], "Node.js"):
+            action = prompt_action("Node.js is missing. What now?")
+            if action == "skip":
+                warn("Skipping OpenCode integration.")
+                return
+            continue
+        if not _check_command(["npm", "-v"], "npm"):
+            action = prompt_action("npm is missing. What now?")
+            if action == "skip":
+                warn("Skipping OpenCode integration.")
+                return
+            continue
+        _check_command(["git", "--version"], "Git")
+
+        # Build plugmem-coding-core first if needed
+        core_dir = repo_root / "plugmem-coding-core"
+        if core_dir.is_dir() and not (core_dir / "dist" / "index.js").exists():
+            info("Building core dependency (@plugmem/coding-core)...")
+            try:
+                subprocess.run(["npm", "install"], cwd=str(core_dir), shell=True, check=True, capture_output=True)
+                subprocess.run(["npm", "run", "build"], cwd=str(core_dir), shell=True, check=True, capture_output=True)
+                success("Core dependency built successfully.")
+            except subprocess.CalledProcessError as e:
+                stderr_msg = e.stderr.decode("utf-8", "replace") if e.stderr else str(e)
+                error(f"Failed to build core dependency (@plugmem/coding-core): {stderr_msg}")
+                action = prompt_action("Build failed. What now?")
+                if action == "skip":
+                    warn("Skipping OpenCode integration.")
+                    return
+                continue
+
+        # Build the plugin
+        info("Building OpenCode plugin (npm install && npm run build)...")
+        try:
+            subprocess.run(["npm", "install"], cwd=str(plugin_dir), shell=True, check=True, capture_output=True)
+            subprocess.run(["npm", "run", "build"], cwd=str(plugin_dir), shell=True, check=True, capture_output=True)
+            success("Plugin built successfully.")
+            break
+        except subprocess.CalledProcessError as e:
+            stderr_msg = e.stderr.decode("utf-8", "replace") if e.stderr else str(e)
+            error(f"Failed to build OpenCode plugin: {stderr_msg}")
+            action = prompt_action("Build failed. What now?")
+            if action == "skip":
+                warn("Skipping OpenCode integration.")
+                return
+            continue
+
+    dist_js = plugin_dir / "dist" / "index.js"
+    if not dist_js.exists():
+        error(f"Plugin compiled but output file not found at {dist_js}.")
+        return
+
+    # 4. Integrate workspace config (opencode.jsonc)
+    plugin_path = str(dist_js.resolve()).replace("\\", "/")
+    config_file_path = Path(project_dir) / "opencode.jsonc"
+
+    # Merge provider settings into opencode.jsonc
+    # Since we are running the local daemon, we use custom OpenAI-compatible provider pointing to the daemon
+    daemon_url = f"http://{cfg.service.host}:{cfg.service.port}"
+    opencode_jsonc = {
+        "$schema": "https://opencode.ai/config.json",
+        "plugin": [plugin_path],
+        "model": f"custom/{cfg.llm.model}",
+        "provider": {
+            "custom": {
+                "npm": "@ai-sdk/openai-compatible",
+                "name": "Local PlugMem Daemon",
+                "options": {
+                    "baseURL": daemon_url,
+                    "apiKey": cfg.service.api_key,
+                    "headers": {
+                        "ngrok-skip-browser-warning": "true"
+                    }
+                },
+                "models": {
+                    cfg.llm.model: {
+                        "name": cfg.llm.model,
+                        "limit": {
+                            "context": 40960,
+                            "output": 4096
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    existing_config = {}
+    has_comments = False
+
+    if config_file_path.exists():
+        info(f"Existing '{config_file_path}' detected. Merging settings...")
+        try:
+            content = config_file_path.read_text(encoding="utf-8")
+            clean_content = re.sub(r"//.*|/\*.*?\*/", "", content, flags=re.MULTILINE)
+            existing_config = json.loads(clean_content)
+        except Exception:
+            has_comments = True
+
+        if has_comments:
+            backup_path = config_file_path.with_suffix(".jsonc.bak")
+            shutil.copy2(config_file_path, backup_path)
+            warn(f"Existing config contains comments or is invalid JSON. Backed up to: {backup_path}")
+        else:
+            plugins = existing_config.get("plugin", [])
+            if plugin_path not in plugins:
+                plugins.append(plugin_path)
+            opencode_jsonc["plugin"] = plugins
+
+            providers = existing_config.get("provider", {})
+            for pid, pval in opencode_jsonc.get("provider", {}).items():
+                providers[pid] = pval
+            opencode_jsonc["provider"] = providers
+
+            for k, v in existing_config.items():
+                if k not in ["plugin", "model", "provider", "$schema"]:
+                    opencode_jsonc[k] = v
+
+    try:
+        config_file_path.write_text(json.dumps(opencode_jsonc, indent=2), encoding="utf-8")
+        success(f"Successfully integrated configuration with: {config_file_path}")
+    except Exception as e:
+        error(f"Failed to write config file: {e}")
+        return
+
+    # Write/merge environment variables in .env file
+    env_file_path = Path(project_dir) / ".env"
+    existing_env = {}
+    if env_file_path.exists():
+        try:
+            content = env_file_path.read_text(encoding="utf-8")
+            for line in content.split("\n"):
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                parts = line.split("=", 1)
+                existing_env[parts[0].strip()] = parts[1].strip()
+        except Exception:
+            pass
+
+    existing_env["PLUGMEM_URL"] = f'"{daemon_url}"'
+    existing_env["PLUGMEM_BASE_URL"] = f'"{daemon_url}"'
+    existing_env["PLUGMEM_API_KEY"] = f'"{cfg.service.api_key}"'
+
+    try:
+        new_content = []
+        new_content.append("# Auto-generated/updated by PlugMem Setup Wizard")
+        for k, v in existing_env.items():
+            new_content.append(f"{k}={v}")
+        env_file_path.write_text("\n".join(new_content) + "\n", encoding="utf-8")
+        success(f"Successfully integrated environment variables with: {env_file_path}")
+    except Exception as e:
+        warn(f"Could not write environment file {env_file_path}: {e}")
+
+    # 5. Derive graph ID and pre-register with local server
+    graph_id = _derive_graph_id(project_dir)
+    info(f"Derived Graph ID for workspace: {graph_id}")
+
+    # Register the graph ID
+    # Since we can't guarantee the daemon is started yet (it was stopped after the final probe),
+    # we explain to the user that it will register automatically when the session starts,
+    # but we print out how it is configured.
+    success(f"OpenCode workspace integration complete under Graph ID '{graph_id}'.")
+    info("")
+    info("To run your OpenCode agent with PlugMem:")
+    info("  1. Start the PlugMem daemon: plugmem start")
+    info("  2. Open a terminal in your workspace:")
+    info(f"     cd \"{project_dir}\"")
+    info("  3. Run your OpenCode agent:")
+    info("     # (Settings are loaded automatically from .env file!)")
+    info("     # Now launch OpenCode (e.g. opencode start)")
+
+
+def _check_command(cmd_args: list[str], name: str) -> bool:
+    try:
+        res = subprocess.run(cmd_args, capture_output=True, text=True, check=True, shell=True)
+        version_str = res.stdout.strip() or res.stderr.strip()
+        cleaned_version = version_str.split("\n")[0].strip()
+        success(f"{name} is installed: {cleaned_version}")
+        return True
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        error(f"{name} is NOT installed or not in PATH. Please install it to continue.")
+        return False
+
+
+def _get_git_remote(cwd: str) -> str | None:
+    try:
+        res = subprocess.run(["git", "remote", "get-url", "origin"], cwd=cwd, capture_output=True, text=True, check=True, shell=True)
+        return res.stdout.strip()
+    except Exception:
+        return None
+
+
+def _parse_git_url(raw: str) -> tuple[str, str, str] | None:
+    raw = raw.strip()
+    if not raw:
+        return None
+    if raw.endswith(".git"):
+        raw = raw[:-4]
+    if "://" in raw:
+        try:
+            u = urlparse(raw)
+            host = u.netloc.split("@")[-1].split(":")[0].lower()
+            path = u.path.strip("/")
+            parts = path.split("/")
+            if len(parts) >= 2:
+                repo = parts[-1]
+                owner = "/".join(parts[:-1])
+                return host, owner, repo
+        except Exception:
+            pass
+    else:
+        m = re.match(r"^[^@\s]+@([^:\s]+):([^\s]+)$", raw)
+        if m:
+            host = m.group(1).lower()
+            path = m.group(2).strip("/")
+            parts = path.split("/")
+            if len(parts) >= 2:
+                repo = parts[-1]
+                owner = "/".join(parts[:-1])
+                return host, owner, repo
+    return None
+
+
+def _derive_graph_id(cwd: str) -> str:
+    abs_cwd = os.path.abspath(cwd)
+    remote = _get_git_remote(abs_cwd)
+    if remote:
+        ident = _parse_git_url(remote)
+        if ident:
+            host, owner, repo = ident
+            return f"repo_opencode_{host}_{owner}_{repo}"
+    
+    safe_path = re.sub(r"[^a-zA-Z0-9._-]", "_", abs_cwd)
+    return f"repo_opencode_local_{safe_path}"

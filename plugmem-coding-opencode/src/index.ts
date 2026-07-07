@@ -47,13 +47,37 @@ export function getSessionId(event: any): string {
   return cleanId;
 }
 
+function loadEnvFile() {
+  if (fs.existsSync(".env")) {
+    try {
+      const content = fs.readFileSync(".env", "utf-8");
+      for (const line of content.split("\n")) {
+        const trimmed = line.trim();
+        if (!trimmed || trimmed.startsWith("#")) continue;
+        const match = trimmed.match(/^([^=]+)=(.*)$/);
+        if (match) {
+          const key = match[1].trim();
+          let value = match[2].trim();
+          if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+            value = value.slice(1, -1);
+          }
+          process.env[key] = value;
+        }
+      }
+    } catch (e) {
+      logDebug(`Failed to parse .env file: ${String(e)}`);
+    }
+  }
+}
+
 export const PlugMemPlugin: Plugin = async (ctx: PluginContext): Promise<PluginHooks> => {
+  loadEnvFile();
   logDebug("==== PLUGMEM ADAPTER INITIALIZED ====");
   logDebug(`ENV API KEY: ${process.env.PLUGMEM_API_KEY}`);
 
   const core = createCore({
     config: {
-      baseUrl: process.env.PLUGMEM_URL || "http://127.0.0.1:8077",
+      baseUrl: process.env.PLUGMEM_URL || process.env.PLUGMEM_BASE_URL || "http://127.0.0.1:8077",
       apiKey: process.env.PLUGMEM_API_KEY || "dev-key-change-me",
       userId: process.env.USER || "opencode-user", 
     },
