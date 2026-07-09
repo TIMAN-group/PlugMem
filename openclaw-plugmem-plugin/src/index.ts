@@ -1,4 +1,5 @@
 import { Type } from "@sinclair/typebox";
+import * as fs from "node:fs";
 import { PlugMemClient } from "./client.js";
 import type { PlugMemPluginConfig, ResolvedConfig } from "./config.js";
 import { resolveConfig } from "./config.js";
@@ -361,7 +362,31 @@ async function readSessionFile(
 
 // ── Plugin definition ────────────────────────────────────────────────
 
+function loadEnvFile() {
+  if (fs.existsSync(".env")) {
+    try {
+      const content = fs.readFileSync(".env", "utf-8");
+      for (const line of content.split("\n")) {
+        const trimmed = line.trim();
+        if (!trimmed || trimmed.startsWith("#")) continue;
+        const match = trimmed.match(/^([^=]+)=(.*)$/);
+        if (match) {
+          const key = match[1].trim();
+          let value = match[2].trim();
+          if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+            value = value.slice(1, -1);
+          }
+          process.env[key] = value;
+        }
+      }
+    } catch {
+      // Ignore errors reading/parsing .env
+    }
+  }
+}
+
 export function createPlugMemPlugin(config: PlugMemPluginConfig): PluginEntry {
+  loadEnvFile();
   const resolved = resolveConfig(config);
   const client = new PlugMemClient(config);
   const defaultGraphId = resolved.defaultGraphId;

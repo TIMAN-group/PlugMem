@@ -22,6 +22,7 @@ from plugmem.cli.wizard.sections import (
     run_service_section,
 )
 from plugmem.cli.wizard.opencode import run_opencode_section
+from plugmem.cli.wizard.openclaw import run_openclaw_section
 from plugmem.cli.wizard.ui import error, header, info, prompt_choice, success, warn
 
 
@@ -52,7 +53,8 @@ def run_wizard(
 
     header("Final probe")
     info("Launching the service briefly to verify everything wires up…")
-    ok, msg = run_final_probe(cfg)
+    probe_proc = None
+    ok, msg, probe_proc = run_final_probe(cfg)
     if not ok:
         error(f"Probe failed: {msg}")
         retry = prompt_choice(
@@ -69,5 +71,20 @@ def run_wizard(
     written = save_config(cfg, path)
     success(f"Wrote config to {written}")
 
-    run_opencode_section(cfg)
+    header("Client Integration")
+    client = prompt_choice(
+        "Which coding client workspace would you like to configure?",
+        choices=["OpenCode", "OpenClaw", "Skip / None"],
+        default="OpenCode",
+    )
+    try:
+        if client == "OpenCode":
+            run_opencode_section(cfg)
+        elif client == "OpenClaw":
+            run_openclaw_section(cfg)
+    finally:
+        if probe_proc is not None:
+            from plugmem.cli.wizard.final_probe import _terminate
+            _terminate(probe_proc)
+
     return 0

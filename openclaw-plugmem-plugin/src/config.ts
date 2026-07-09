@@ -9,7 +9,7 @@ export interface AutoRememberConfig {
 
 export interface PlugMemPluginConfig {
   /** PlugMem service URL (e.g. http://localhost:8080) */
-  baseUrl: string;
+  baseUrl?: string;
   /** API key for service authentication */
   apiKey?: string;
   /** Default graph ID used when not specified per-call */
@@ -50,10 +50,14 @@ export interface ResolvedConfig {
 }
 
 export function resolveConfig(raw: PlugMemPluginConfig): ResolvedConfig {
+  const envBaseUrl = process.env.PLUGMEM_URL || process.env.PLUGMEM_BASE_URL || "http://localhost:8080";
+  const envApiKey = process.env.PLUGMEM_API_KEY;
+  const envDefaultGraph = process.env.PLUGMEM_DEFAULT_GRAPH_ID || process.env.PLUGMEM_GRAPH_ID;
+
   return {
-    baseUrl: raw.baseUrl.replace(/\/+$/, ""),
-    apiKey: raw.apiKey,
-    defaultGraphId: raw.defaultGraphId,
+    baseUrl: (raw.baseUrl || envBaseUrl).replace(/\/+$/, ""),
+    apiKey: raw.apiKey || envApiKey,
+    defaultGraphId: raw.defaultGraphId || envDefaultGraph,
     sharedReadGraphIds: raw.sharedReadGraphIds ?? [],
     timeoutMs: raw.timeoutMs ?? DEFAULTS.timeoutMs,
     maxRetries: raw.maxRetries ?? DEFAULTS.maxRetries,

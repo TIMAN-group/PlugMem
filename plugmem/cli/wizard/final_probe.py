@@ -18,14 +18,21 @@ from pathlib import Path
 from plugmem.cli.config import PlugmemConfig, config_to_env
 
 
-def run_final_probe(cfg: PlugmemConfig, *, timeout: float = 30.0) -> Tuple[bool, str]:
-    """Spawn uvicorn with cfg's env, poll /health, return (ok, message).
+def run_final_probe(cfg: PlugmemConfig, *, timeout: float = 30.0) -> Tuple[bool, str, Optional[subprocess.Popen]]:
+    """Spawn uvicorn with cfg's env, poll /health, return (ok, message, proc).
 
-    Always cleans up the subprocess. Never raises — every failure mode
-    becomes a returned message.
+    If successful, keeps the subprocess running and returns it. If it fails,
+    cleans it up immediately.
     """
     env = os.environ.copy()
     env.update(config_to_env(cfg))
+
+    # Ensure PYTHONPATH is populated so uvicorn can resolve the plugmem module
+    cwd = os.getcwd()
+    if "PYTHONPATH" in env:
+        env["PYTHONPATH"] = cwd + os.pathsep + env["PYTHONPATH"]
+    else:
+        env["PYTHONPATH"] = cwd
 
     cmd = [
         sys.executable,
@@ -43,16 +50,35 @@ def run_final_probe(cfg: PlugmemConfig, *, timeout: float = 30.0) -> Tuple[bool,
     log_path = Path("probe_uvicorn.log")
     log_file = open(log_path, "w", encoding="utf-8")
 
+    try:
+        os.set_inheritable(log_file.fileno(), True)
+    except Exception:
+        pass
+
     proc = subprocess.Popen(
         cmd,
         env=env,
         stdout=log_file,
         stderr=subprocess.STDOUT,
+        cwd=cwd,
     )
 
     try:
         ok, msg = _poll_health(cfg, timeout=timeout, proc=proc, log_path=log_path)
-    finally:
+        if not ok:
+            _terminate(proc)
+            log_file.close()
+            if log_path.exists():
+                try:
+                    log_path.unlink()
+                except OSError:
+                    pass
+            return False, msg, None
+        
+        # Keep process running, close parent's fd
+        log_file.close()
+        return True, msg, proc
+    except Exception as e:
         _terminate(proc)
         log_file.close()
         if log_path.exists():
@@ -60,8 +86,7 @@ def run_final_probe(cfg: PlugmemConfig, *, timeout: float = 30.0) -> Tuple[bool,
                 log_path.unlink()
             except OSError:
                 pass
-
-    return ok, msg
+        return False, f"Exception during probe: {e}", None
 
 
 def _poll_health(

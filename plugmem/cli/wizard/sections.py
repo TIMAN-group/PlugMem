@@ -262,12 +262,9 @@ def run_service_section(cfg: PlugmemConfig) -> bool:
         warn(f"Could not create or write to {data_dir}; using anyway, may fail at start.")
     cfg.service.data_dir = data_dir
 
-    if not cfg.service.api_key:
-        cfg.service.api_key = secrets.token_hex(16)
-        success(f"Generated service api_key: {cfg.service.api_key}")
-        info("(Store this somewhere safe — clients use it as `X-API-Key`.)")
-    else:
-        info(f"Reusing existing service api_key: {cfg.service.api_key[:8]}…")
+    default_key = cfg.service.api_key or secrets.token_hex(16)
+    cfg.service.api_key = prompt_text("service api_key", default=default_key)
+    info("(Store this somewhere safe — clients use it as `X-API-Key`.)")
 
     cfg.service.log_level = prompt_choice(
         "log_level",

@@ -47,20 +47,36 @@ def _read_pid() -> Optional[int]:
 
 
 def _is_running(pid: int) -> bool:
-    """True if a process with `pid` is alive (no permission required —
-    SIGNAL 0 just probes existence)."""
+    """True if a process with `pid` is alive (no permission required)."""
     if pid <= 0:
         return False
-    try:
-        os.kill(pid, 0)
-        return True
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        # Process exists but we can't signal it — still "running".
-        return True
-    except OSError:
-        return False
+    if sys.platform == "win32":
+        import ctypes
+        kernel32 = ctypes.windll.kernel32
+        # Try to open process with PROCESS_QUERY_LIMITED_INFORMATION (0x1000)
+        handle = kernel32.OpenProcess(0x1000, False, pid)
+        if handle == 0:
+            # Fallback to PROCESS_QUERY_INFORMATION (0x0400)
+            handle = kernel32.OpenProcess(0x0400, False, pid)
+        if handle != 0:
+            exit_code = ctypes.c_ulong()
+            kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code))
+            kernel32.CloseHandle(handle)
+            return exit_code.value == 259  # 259 is STILL_ACTIVE
+        else:
+            # ERROR_ACCESS_DENIED (5) means process exists but we can't query it
+            return kernel32.GetLastError() == 5
+    else:
+        try:
+            os.kill(pid, 0)
+            return True
+        except ProcessLookupError:
+            return False
+        except PermissionError:
+            # Process exists but we can't signal it — still "running".
+            return True
+        except OSError:
+            return False
 
 
 def _clear_pid_file() -> None:
@@ -134,6 +150,11 @@ def start_daemon(
 
     env = os.environ.copy()
     env.update(config_to_env(cfg))
+    cwd = os.getcwd()
+    if "PYTHONPATH" in env:
+        env["PYTHONPATH"] = cwd + os.pathsep + env["PYTHONPATH"]
+    else:
+        env["PYTHONPATH"] = cwd
 
     cmd = _build_uvicorn_cmd(cfg)
 
@@ -143,12 +164,14 @@ def start_daemon(
 
     log_fh = open(log_file, "ab")
     try:
+        os.set_inheritable(log_fh.fileno(), True)
         proc = subprocess.Popen(
             cmd,
             env=env,
             stdout=log_fh,
             stderr=subprocess.STDOUT,
             stdin=subprocess.DEVNULL,
+            cwd=cwd,
             start_new_session=True,  # detach from CLI's controlling terminal
         )
     finally:
@@ -214,7 +237,10 @@ def stop_daemon(*, timeout: float = 10.0) -> bool:
         return False
 
     try:
-        os.kill(pid, signal.SIGTERM)
+        if sys.platform == "win32":
+            subprocess.run(["taskkill", "/F", "/PID", str(pid)], capture_output=True, check=False)
+        else:
+            os.kill(pid, signal.SIGTERM)
     except ProcessLookupError:
         _clear_pid_file()
         return True
@@ -228,7 +254,10 @@ def stop_daemon(*, timeout: float = 10.0) -> bool:
 
     # Process didn't honor SIGTERM in time — escalate.
     try:
-        os.kill(pid, signal.SIGKILL)
+        if sys.platform == "win32":
+            subprocess.run(["taskkill", "/F", "/PID", str(pid)], capture_output=True, check=False)
+        else:
+            os.kill(pid, signal.SIGKILL)
     except ProcessLookupError:
         pass
     # Wait a moment for the kernel to reap.
