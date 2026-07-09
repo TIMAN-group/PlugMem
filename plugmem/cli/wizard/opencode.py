@@ -123,35 +123,10 @@ def run_opencode_section(cfg: PlugmemConfig) -> None:
     plugin_path = str(dist_js.resolve()).replace("\\", "/")
     config_file_path = Path(project_dir) / "opencode.jsonc"
 
-    # Merge provider settings into opencode.jsonc
-    # Since we are running the local daemon, we use custom OpenAI-compatible provider pointing to the daemon
     daemon_url = f"http://{cfg.service.host}:{cfg.service.port}"
     opencode_jsonc = {
         "$schema": "https://opencode.ai/config.json",
-        "plugin": [plugin_path],
-        "model": f"custom/{cfg.llm.model}",
-        "provider": {
-            "custom": {
-                "npm": "@ai-sdk/openai-compatible",
-                "name": "Local PlugMem Daemon",
-                "options": {
-                    "baseURL": daemon_url,
-                    "apiKey": cfg.service.api_key,
-                    "headers": {
-                        "ngrok-skip-browser-warning": "true"
-                    }
-                },
-                "models": {
-                    cfg.llm.model: {
-                        "name": cfg.llm.model,
-                        "limit": {
-                            "context": 40960,
-                            "output": 4096
-                        }
-                    }
-                }
-            }
-        }
+        "plugin": [plugin_path]
     }
 
     existing_config = {}
@@ -176,13 +151,8 @@ def run_opencode_section(cfg: PlugmemConfig) -> None:
                 plugins.append(plugin_path)
             opencode_jsonc["plugin"] = plugins
 
-            providers = existing_config.get("provider", {})
-            for pid, pval in opencode_jsonc.get("provider", {}).items():
-                providers[pid] = pval
-            opencode_jsonc["provider"] = providers
-
             for k, v in existing_config.items():
-                if k not in ["plugin", "model", "provider", "$schema"]:
+                if k not in ["plugin", "$schema"]:
                     opencode_jsonc[k] = v
 
     try:
