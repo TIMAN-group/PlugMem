@@ -74,7 +74,7 @@ def run_wizard(
     header("Client Integration")
     client = prompt_choice(
         "Which coding client workspace would you like to configure?",
-        choices=["OpenCode", "OpenClaw", "Skip / None"],
+        choices=["OpenCode", "OpenClaw", "Claude Code", "Skip / None"],
         default="OpenCode",
     )
     try:
@@ -82,9 +82,27 @@ def run_wizard(
             run_opencode_section(cfg)
         elif client == "OpenClaw":
             run_openclaw_section(cfg)
+        elif client == "Claude Code":
+            _print_claude_code_instructions(cfg)
     finally:
         if probe_proc is not None:
             from plugmem.cli.wizard.final_probe import _terminate
             _terminate(probe_proc)
 
     return 0
+
+
+def _print_claude_code_instructions(cfg: PlugmemConfig) -> None:
+    """Print the env-var block clients use to wire up the Claude Code plugin."""
+    header("Claude Code Integration")
+    info("Start the daemon:")
+    info("    plugmem start")
+    info("")
+    info("To wire the Claude Code plugin against this instance, export:")
+    info(f"    export PLUGMEM_BASE_URL=http://{cfg.service.host}:{cfg.service.port}")
+    info(f"    export PLUGMEM_API_KEY={cfg.service.api_key}")
+    info("")
+    info("Then in your project repo:")
+    info(
+        "    claude --plugin-dir /absolute/path/to/plugmem-coding-claude-code"
+    )
