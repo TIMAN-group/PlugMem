@@ -55,29 +55,30 @@ def run_wizard(
     info("Launching the service briefly to verify everything wires up…")
     probe_proc = None
     ok, msg, probe_proc = run_final_probe(cfg)
-    if not ok:
-        error(f"Probe failed: {msg}")
-        retry = prompt_choice(
-            "What now?",
-            choices=["save anyway", "abort"],
-            default="abort",
-        )
-        if retry == "abort":
-            return 1
-        warn("Saving config despite probe failure — fix the issue and re-run `plugmem doctor`.")
-    else:
-        success(msg)
-
-    written = save_config(cfg, path)
-    success(f"Wrote config to {written}")
-
-    header("Client Integration")
-    client = prompt_choice(
-        "Which coding client workspace would you like to configure?",
-        choices=["OpenCode", "OpenClaw", "Claude Code", "Skip / None"],
-        default="OpenCode",
-    )
     try:
+        if not ok:
+            error(f"Probe failed: {msg}")
+            retry = prompt_choice(
+                "What now?",
+                choices=["save anyway", "abort"],
+                default="abort",
+            )
+            if retry == "abort":
+                return 1
+            warn("Saving config despite probe failure — fix the issue and re-run `plugmem doctor`.")
+        else:
+            success(msg)
+
+        written = save_config(cfg, path)
+        success(f"Wrote config to {written}")
+
+        header("Client Integration")
+        client = prompt_choice(
+            "Which coding client workspace would you like to configure?",
+            choices=["OpenCode", "OpenClaw", "Claude Code", "Skip / None"],
+            default="OpenCode",
+        )
+        
         if client == "OpenCode":
             run_opencode_section(cfg)
         elif client == "OpenClaw":
