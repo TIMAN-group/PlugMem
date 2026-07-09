@@ -162,31 +162,52 @@ def run_opencode_section(cfg: PlugmemConfig) -> None:
         error(f"Failed to write config file: {e}")
         return
 
-    # Write/merge environment variables in .env file
+    # Write/merge environment variables in .env file safely
     env_file_path = Path(project_dir) / ".env"
-    existing_env = {}
+    env_content = ""
     if env_file_path.exists():
         try:
-            content = env_file_path.read_text(encoding="utf-8")
-            for line in content.split("\n"):
-                line = line.strip()
-                if not line or line.startswith("#") or "=" not in line:
-                    continue
-                parts = line.split("=", 1)
-                existing_env[parts[0].strip()] = parts[1].strip()
+            env_content = env_file_path.read_text(encoding="utf-8")
         except Exception:
             pass
 
-    existing_env["PLUGMEM_URL"] = f'"{daemon_url}"'
-    existing_env["PLUGMEM_BASE_URL"] = f'"{daemon_url}"'
-    existing_env["PLUGMEM_API_KEY"] = f'"{cfg.service.api_key}"'
+    updates = {
+        "PLUGMEM_URL": f'"{daemon_url}"',
+        "PLUGMEM_BASE_URL": f'"{daemon_url}"',
+        "PLUGMEM_API_KEY": f'"{cfg.service.api_key}"'
+    }
+
+    lines = env_content.splitlines()
+    new_lines = []
+    found_keys = set()
+    for line in lines:
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            new_lines.append(line)
+            continue
+        if "=" in line:
+            k, _ = line.split("=", 1)
+            k_stripped = k.strip()
+            if k_stripped in updates:
+                new_lines.append(f"{k}={updates[k_stripped]}")
+                found_keys.add(k_stripped)
+            else:
+                new_lines.append(line)
+        else:
+            new_lines.append(line)
+
+    added_any = False
+    for k, v in updates.items():
+        if k not in found_keys:
+            if not added_any:
+                if new_lines and new_lines[-1].strip() != "":
+                    new_lines.append("")
+                new_lines.append("# Added by PlugMem Setup Wizard")
+                added_any = True
+            new_lines.append(f"{k}={v}")
 
     try:
-        new_content = []
-        new_content.append("# Auto-generated/updated by PlugMem Setup Wizard")
-        for k, v in existing_env.items():
-            new_content.append(f"{k}={v}")
-        env_file_path.write_text("\n".join(new_content) + "\n", encoding="utf-8")
+        env_file_path.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
         success(f"Successfully integrated environment variables with: {env_file_path}")
     except Exception as e:
         warn(f"Could not write environment file {env_file_path}: {e}")
