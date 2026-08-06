@@ -11,6 +11,7 @@ from fastapi.staticfiles import StaticFiles
 
 from plugmem import __version__
 from plugmem.api.routes import demo, inspector, extract, graphs, health, memories, retrieval
+from plugmem.api.urlsafe import EncodedSlashPathMiddleware
 
 logger = logging.getLogger(__name__)
 
@@ -122,6 +123,9 @@ def create_app() -> FastAPI:
     )
 
     app.add_middleware(RequestLoggingMiddleware)
+    # Added last, so it wraps outermost and runs before routing. Graph IDs
+    # arrive percent-encoded and must stay that way until a route matches.
+    app.add_middleware(EncodedSlashPathMiddleware)
 
     # Mount route modules under /api/v1
     app.include_router(health.router, prefix="/api/v1")

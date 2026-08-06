@@ -16,6 +16,7 @@ from plugmem.api.schemas import (
     RetrieveRequest,
     RetrieveResponse,
 )
+from plugmem.api.urlsafe import UnquotedPathParamsRoute
 from plugmem.clients.llm import with_phase
 from plugmem.graph_manager import GraphManager
 
@@ -70,7 +71,12 @@ def _audit_from_trace(result: Dict[str, Any]) -> Dict[str, Any]:
         "selected_procedural_ids": selected.get("procedural_ids", []),
     }
 
-router = APIRouter(prefix="/graphs", tags=["retrieval"], dependencies=[Depends(require_api_key)])
+router = APIRouter(
+    prefix="/graphs",
+    tags=["retrieval"],
+    dependencies=[Depends(require_api_key)],
+    route_class=UnquotedPathParamsRoute,
+)
 
 
 def _manager() -> GraphManager:

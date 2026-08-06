@@ -8,11 +8,17 @@ from fastapi import APIRouter, Depends, HTTPException
 from plugmem.api.auth import require_api_key
 from plugmem.api.dependencies import get_embedder, get_graph_manager, get_llm
 from plugmem.api.schemas import MemoryInsertRequest, MemoryInsertResponse
+from plugmem.api.urlsafe import UnquotedPathParamsRoute
 from plugmem.core.memory import Memory
 from plugmem.graph_manager import GraphManager
 
 logger = logging.getLogger(__name__)
-router = APIRouter(prefix="/graphs", tags=["memories"], dependencies=[Depends(require_api_key)])
+router = APIRouter(
+    prefix="/graphs",
+    tags=["memories"],
+    dependencies=[Depends(require_api_key)],
+    route_class=UnquotedPathParamsRoute,
+)
 
 
 def _manager() -> GraphManager:

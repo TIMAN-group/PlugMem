@@ -12,9 +12,15 @@ from plugmem.api.schemas import (
     StatsResponse,
     NodeListResponse,
 )
+from plugmem.api.urlsafe import UnquotedPathParamsRoute
 from plugmem.graph_manager import GraphManager
 
-router = APIRouter(prefix="/graphs", tags=["graphs"], dependencies=[Depends(require_api_key)])
+router = APIRouter(
+    prefix="/graphs",
+    tags=["graphs"],
+    dependencies=[Depends(require_api_key)],
+    route_class=UnquotedPathParamsRoute,
+)
 
 
 def _manager() -> GraphManager:
