@@ -5,8 +5,10 @@ Each memory graph gets 5 collections: semantic, procedural, tag, subgoal, episod
 """
 from __future__ import annotations
 
+import base64
 import json
 import logging
+import re
 from typing import Any, Dict, List, Optional
 
 import chromadb
@@ -16,9 +18,76 @@ logger = logging.getLogger(__name__)
 
 NODE_TYPES = ("semantic", "procedural", "tag", "subgoal", "episodic")
 
+# ChromaDB collection names are restricted to [a-zA-Z0-9._-] and must start and
+# end alphanumerically. Graph IDs are not: the coding adapters mint IDs like
+# "repo://claude-code/github.com/owner/repo" and "user://claude-code/<id>",
+# whose "/" and ":" Chroma rejects outright.
+#
+# list_graphs() recovers a graph ID by stripping the "_<node_type>" suffix off a
+# collection name, so whatever we do here has to be reversible. That rules out
+# slugs and hashes. Base32's alphabet (A-Z, 2-7) is Chroma-legal by construction
+# and decodes exactly, so unsafe IDs are encoded and tagged with a marker.
+#
+# IDs that are already legal pass through untouched: graphs created before this
+# encoding existed keep resolving, and readable IDs stay readable on disk.
+_ENCODED_PREFIX = "b32-"
+_CHROMA_SAFE_RE = re.compile(r"[a-zA-Z0-9][a-zA-Z0-9._-]*[a-zA-Z0-9]")
+
+# Chroma caps collection names at 512 characters. Budget for the marker and the
+# longest suffix we append, then divide by base32's 8/5 expansion. Comfortably
+# above any real repo URL or filesystem path, but bounded rather than silent.
+_MAX_COLLECTION_NAME = 512
+_LONGEST_SUFFIX = "_recall_audit"
+_MAX_ENCODED_GRAPH_ID = (
+    (_MAX_COLLECTION_NAME - len(_LONGEST_SUFFIX) - len(_ENCODED_PREFIX)) * 5
+) // 8
+
+
+def _is_chroma_safe(graph_id: str) -> bool:
+    """True when the ID can be used as a collection name verbatim."""
+    if graph_id.startswith(_ENCODED_PREFIX):
+        # Would be ambiguous with an encoded name on the way back out.
+        return False
+    return bool(_CHROMA_SAFE_RE.fullmatch(graph_id))
+
+
+def _encode_graph_id(graph_id: str) -> str:
+    """Map a graph ID onto a Chroma-legal, reversible collection-name stem.
+
+    Raises:
+        ValueError: if encoding would overflow Chroma's collection-name limit.
+            Better a named limit here than a ChromaDB validation error naming a
+            base32 blob the caller never wrote.
+    """
+    if _is_chroma_safe(graph_id):
+        return graph_id
+    encoded_len = len(graph_id.encode("utf-8"))
+    if encoded_len > _MAX_ENCODED_GRAPH_ID:
+        raise ValueError(
+            f"Graph ID is too long to encode: {encoded_len} bytes, "
+            f"limit is {_MAX_ENCODED_GRAPH_ID}."
+        )
+    body = base64.b32encode(graph_id.encode("utf-8")).decode("ascii").rstrip("=")
+    return f"{_ENCODED_PREFIX}{body}"
+
+
+def _decode_graph_id(stem: str) -> str:
+    """Inverse of _encode_graph_id. Unmarked stems are returned as-is."""
+    if not stem.startswith(_ENCODED_PREFIX):
+        return stem
+    body = stem[len(_ENCODED_PREFIX) :]
+    padding = "=" * (-len(body) % 8)
+    try:
+        return base64.b32decode(body + padding).decode("utf-8")
+    except Exception:
+        # Not ours after all; a literal name that happens to start with the
+        # marker is better surfaced than swallowed.
+        logger.debug("Collection stem %r carries the marker but is not base32", stem)
+        return stem
+
 
 def _collection_name(graph_id: str, node_type: str) -> str:
-    return f"{graph_id}_{node_type}"
+    return f"{_encode_graph_id(graph_id)}_{node_type}"
 
 
 def _to_list(v: Any) -> Optional[List[float]]:
@@ -88,7 +157,7 @@ class ChromaStorage:
             except Exception:
                 pass
         try:
-            self._client.delete_collection(f"{graph_id}_recall_audit")
+            self._client.delete_collection(_collection_name(graph_id, "recall_audit"))
         except Exception:
             pass
 
@@ -110,7 +179,7 @@ class ChromaStorage:
             for nt in NODE_TYPES:
                 suffix = f"_{nt}"
                 if col_name.endswith(suffix):
-                    graph_ids.add(col_name[: -len(suffix)])
+                    graph_ids.add(_decode_graph_id(col_name[: -len(suffix)]))
                     break
         return sorted(graph_ids)
 
@@ -775,7 +844,7 @@ class ChromaStorage:
 
     def _recall_col(self, graph_id: str):
         return self._client.get_or_create_collection(
-            name=f"{graph_id}_recall_audit",
+            name=_collection_name(graph_id, "recall_audit"),
             metadata={"hnsw:space": "cosine"},
             embedding_function=self._embedding_fn,
         )
