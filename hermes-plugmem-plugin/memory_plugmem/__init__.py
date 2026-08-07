@@ -23,7 +23,7 @@ from __future__ import annotations
 import json
 import logging
 import os
-import re
+import time
 import urllib.request
 import urllib.error
 from typing import Any, Dict, List, Optional
@@ -39,11 +39,10 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_BASE_URL = "http://localhost:8080"
 DEFAULT_GRAPH_ID = "hermes-default"
-
-
-def _env(key: str, default: str = "") -> str:
-    """Read an env var set by Hermes (from profile .env). No dotenv fallback."""
-    return os.environ.get(key, default)
+CONSOLIDATE_EVERY_N_TURNS = 50
+PREFETCH_MIN_QUERY_LEN = 8
+PREFETCH_MAX_RETRIES = 2
+PREFETCH_RETRY_DELAY = 0.5
 
 
 # ---------------------------------------------------------------------------
@@ -67,10 +66,15 @@ class PlugMemClient:
         self.api_key = api_key
         self.timeout = timeout
 
-    def _request(self, method: str, path: str, body: Dict[str, Any] | None = None) -> Dict[str, Any]:
+    def _request(
+        self, method: str, path: str, body: Dict[str, Any] | None = None
+    ) -> Dict[str, Any]:
         url = f"{self.base_url}{path}"
         data = json.dumps(body).encode("utf-8") if body else None
-        headers: Dict[str, str] = {"Content-Type": "application/json", "Accept": "application/json"}
+        headers: Dict[str, str] = {
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        }
         if self.api_key:
             headers["X-API-Key"] = self.api_key
 
@@ -107,10 +111,14 @@ class PlugMemClient:
 
     # -- Memory --
 
-    def insert_structured(self, graph_id: str, semantic: List[Dict], **extra) -> Dict[str, Any]:
+    def insert_structured(
+        self, graph_id: str, semantic: List[Dict], **extra
+    ) -> Dict[str, Any]:
         body: Dict[str, Any] = {"mode": "structured", "semantic": semantic}
         body.update(extra)
-        return self._request("POST", f"{self._API_PREFIX}/graphs/{graph_id}/memories", body)
+        return self._request(
+            "POST", f"{self._API_PREFIX}/graphs/{graph_id}/memories", body
+        )
 
     def insert_trajectory(
         self,
@@ -122,7 +130,9 @@ class PlugMemClient:
         body: Dict[str, Any] = {"mode": "trajectory", "goal": goal, "steps": steps}
         if session_id:
             body["session_id"] = session_id
-        return self._request("POST", f"{self._API_PREFIX}/graphs/{graph_id}/memories", body)
+        return self._request(
+            "POST", f"{self._API_PREFIX}/graphs/{graph_id}/memories", body
+        )
 
     # -- Retrieval --
 
@@ -137,21 +147,16 @@ class PlugMemClient:
         if mode:
             body["mode"] = mode
         body.update(kwargs)
-        return self._request("POST", f"{self._API_PREFIX}/graphs/{graph_id}/reason", body)
-
-    def retrieve(
-        self, graph_id: str, observation: str, mode: str = "", **kwargs
-    ) -> Dict[str, Any]:
-        body: Dict[str, Any] = {"observation": observation}
-        if mode:
-            body["mode"] = mode
-        body.update(kwargs)
-        return self._request("POST", f"{self._API_PREFIX}/graphs/{graph_id}/retrieve", body)
+        return self._request(
+            "POST", f"{self._API_PREFIX}/graphs/{graph_id}/reason", body
+        )
 
     # -- Consolidation --
 
     def consolidate(self, graph_id: str) -> Dict[str, Any]:
-        return self._request("POST", f"{self._API_PREFIX}/graphs/{graph_id}/consolidate", {})
+        return self._request(
+            "POST", f"{self._API_PREFIX}/graphs/{graph_id}/consolidate", {}
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -171,12 +176,16 @@ REMEMBER_SCHEMA = {
         "properties": {
             "text": {
                 "type": "string",
-                "description": "Free-text fact, preference, or knowledge to remember permanently.",
+                "description": (
+                    "Free-text fact, preference, or knowledge to remember permanently."
+                ),
             },
             "tags": {
                 "type": "array",
                 "items": {"type": "string"},
-                "description": "Optional category tags (e.g. ['project', 'decision', 'preference']).",
+                "description": (
+                    "Optional category tags (e.g. ['project', 'decision', 'preference'])."
+                ),
             },
             "goal": {
                 "type": "string",
@@ -192,7 +201,9 @@ REMEMBER_SCHEMA = {
                     },
                     "required": ["observation", "action"],
                 },
-                "description": "Observation/action pairs to structure and store (with 'goal').",
+                "description": (
+                    "Observation/action pairs to structure and store (with 'goal')."
+                ),
             },
         },
     },
@@ -216,7 +227,9 @@ RECALL_SCHEMA = {
             "mode": {
                 "type": "string",
                 "enum": ["semantic_memory", "episodic_memory", "procedural_memory"],
-                "description": "Memory type to search. Omit to let PlugMem decide automatically.",
+                "description": (
+                    "Memory type to search. Omit to let PlugMem decide automatically."
+                ),
             },
         },
         "required": ["observation"],
@@ -236,11 +249,15 @@ LEARN_SCHEMA = {
         "properties": {
             "title": {
                 "type": "string",
-                "description": "Name of the procedure (e.g. 'Deploy to VPS', 'Run integration tests').",
+                "description": (
+                    "Name of the procedure (e.g. 'Deploy to VPS', 'Run integration tests')."
+                ),
             },
             "description": {
                 "type": "string",
-                "description": "What this procedure accomplishes and when to use it.",
+                "description": (
+                    "What this procedure accomplishes and when to use it."
+                ),
             },
             "steps": {
                 "type": "array",
@@ -257,7 +274,9 @@ LEARN_SCHEMA = {
             "tags": {
                 "type": "array",
                 "items": {"type": "string"},
-                "description": "Optional category tags (e.g. ['deployment', 'testing']).",
+                "description": (
+                    "Optional category tags (e.g. ['deployment', 'testing'])."
+                ),
             },
         },
         "required": ["title", "steps"],
@@ -276,7 +295,9 @@ PROCEDURE_SCHEMA = {
         "properties": {
             "query": {
                 "type": "string",
-                "description": "What procedure are you looking for? (e.g. 'deploy', 'run tests')",
+                "description": (
+                    "What procedure are you looking for? (e.g. 'deploy', 'run tests')"
+                ),
             },
         },
         "required": ["query"],
@@ -289,34 +310,118 @@ PROCEDURE_SCHEMA = {
 # ---------------------------------------------------------------------------
 
 def _truncate(text: str, max_len: int = 120) -> str:
-    return text if len(text) <= max_len else text[: max_len - 3] + "..."
+    """Truncate text to max_len, safe for any Unicode characters."""
+    if len(text) <= max_len:
+        return text
+    # Use character-based slicing (Python strings are code-point safe)
+    return text[: max_len - 3] + "..."
 
 
-def _format_stats(stats: Dict[str, int]) -> str:
-    parts = [f"{k}: {v}" for k, v in stats.items() if v]
+def _format_stats(stats: Dict[str, Any]) -> str:
+    """Format graph stats dict into a compact string."""
+    parts = []
+    for k, v in stats.items():
+        if v and isinstance(v, (int, float)):
+            parts.append(f"{k}: {v}")
     return ", ".join(parts) if parts else "empty"
+
+
+def _extract_text_content(content: Any) -> str:
+    """Extract readable text from a message content field.
+
+    Handles plain strings, multimodal lists of text/image blocks,
+    and dict representations. Always returns a string.
+    """
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        # Multimodal: collect text parts
+        parts = []
+        for block in content:
+            if isinstance(block, dict):
+                if block.get("type") == "text":
+                    parts.append(str(block.get("text", "")))
+                elif block.get("type") == "image_url":
+                    parts.append("[image]")
+            elif isinstance(block, str):
+                parts.append(block)
+        return "\n".join(parts)
+    if isinstance(content, dict):
+        return str(content.get("text", content.get("content", "")))
+    return str(content) if content else ""
+
+
+def _messages_to_steps(messages: List[Dict[str, Any]]) -> List[Dict[str, str]]:
+    """Convert agent messages to observation/action steps.
+
+    Pairs user messages (observations) with assistant messages (actions).
+    Unpaired messages become solo observations or actions.
+    """
+    steps: List[Dict[str, str]] = []
+    for msg in messages:
+        role = msg.get("role", "")
+        text = _extract_text_content(msg.get("content", ""))
+        if not text:
+            continue
+        if role == "user":
+            steps.append({"observation": text, "action": ""})
+        elif role == "assistant":
+            if steps and not steps[-1].get("action"):
+                steps[-1]["action"] = text
+            else:
+                steps.append({"observation": "", "action": text})
+    return steps
 
 
 def _get_client() -> PlugMemClient:
     return PlugMemClient(
-        base_url=_env("PLUGMEM_BASE_URL", DEFAULT_BASE_URL),
-        api_key=_env("PLUGMEM_API_KEY"),
-        timeout=int(_env("PLUGMEM_TIMEOUT", "30")),
+        base_url=os.environ.get("PLUGMEM_BASE_URL", DEFAULT_BASE_URL),
+        api_key=os.environ.get("PLUGMEM_API_KEY", ""),
+        timeout=int(os.environ.get("PLUGMEM_TIMEOUT", "30")),
     )
+
+
+def _is_empty_reasoning(result: Dict[str, Any]) -> bool:
+    """Check if a reasoning result is genuinely empty (no relevant memories)."""
+    reasoning = result.get("reasoning", "")
+    if not reasoning or not reasoning.strip():
+        return True
+    # PlugMem returns structured markdown with "### Information" section
+    # containing "null" when no memories were found
+    if "### Information\nnull" in reasoning:
+        return True
+    if "No relevant" in reasoning and "### Information" in reasoning:
+        info_start = reasoning.rfind("### Information")
+        info_block = reasoning[info_start:]
+        if "null" in info_block[:200]:
+            return True
+    return False
 
 
 def _merge_reasoning(results: List[Dict[str, Any]]) -> str:
     """Merge recall results from multiple graphs into one reasoning block."""
     parts = []
     for r in results:
-        graph = r.get("graph", "")
         reasoning = r.get("reasoning", "")
-        if reasoning and "No relevant" not in reasoning and "null" not in reasoning[:50]:
-            prefix = f"[{graph}] " if graph else ""
-            parts.append(f"{prefix}{reasoning}")
-    if not parts:
-        return ""
-    return "\n\n".join(parts)
+        if _is_empty_reasoning(r):
+            continue
+        graph = r.get("graph", "")
+        prefix = f"[{graph}] " if graph else ""
+        parts.append(f"{prefix}{reasoning}")
+    return "\n\n".join(parts) if parts else ""
+
+
+def _retry_call(fn, max_retries: int = PREFETCH_MAX_RETRIES, delay: float = PREFETCH_RETRY_DELAY):
+    """Call fn with retries on transient failures."""
+    last_exc = None
+    for attempt in range(max_retries + 1):
+        try:
+            return fn()
+        except PlugMemError as e:
+            last_exc = e
+            if attempt < max_retries:
+                time.sleep(delay)
+    raise last_exc  # type: ignore[misc]
 
 
 # ---------------------------------------------------------------------------
@@ -334,6 +439,7 @@ class PlugMemMemoryProvider(MemoryProvider):
         self._session_id = ""
         self._shared_graph_ids: List[str] = []
         self._turn_count = 0
+        self._consolidated_on_shutdown = False
 
     # -- Abstract methods -------------------------------------------------
 
@@ -343,17 +449,20 @@ class PlugMemMemoryProvider(MemoryProvider):
 
     def is_available(self) -> bool:
         """Check if config is set — lightweight, no network call."""
-        base = os.environ.get("PLUGMEM_BASE_URL", DEFAULT_BASE_URL)
-        return bool(base)
+        return bool(os.environ.get("PLUGMEM_BASE_URL", DEFAULT_BASE_URL))
 
     def initialize(self, session_id: str, **kwargs) -> None:
         self._client = _get_client()
-        self._graph_id = _env("PLUGMEM_DEFAULT_GRAPH_ID", DEFAULT_GRAPH_ID)
+        self._graph_id = os.environ.get("PLUGMEM_DEFAULT_GRAPH_ID", DEFAULT_GRAPH_ID)
         self._session_id = session_id
         self._turn_count = 0
-        shared_raw = _env("PLUGMEM_SHARED_GRAPH_IDS", "")
+        self._consolidated_on_shutdown = False
+
+        shared_raw = os.environ.get("PLUGMEM_SHARED_GRAPH_IDS", "")
         self._shared_graph_ids = (
-            [g.strip() for g in shared_raw.split(",") if g.strip()] if shared_raw else []
+            [g.strip() for g in shared_raw.split(",") if g.strip()]
+            if shared_raw
+            else []
         )
 
         try:
@@ -376,10 +485,11 @@ class PlugMemMemoryProvider(MemoryProvider):
         except Exception:
             return (
                 "# PlugMem Memory\n"
-                "Service unreachable. Configure PLUGMEM_BASE_URL and start the PlugMem service.\n"
+                "Service unreachable. Configure PLUGMEM_BASE_URL and start "
+                "the PlugMem service.\n"
             )
 
-        total = sum(stats.values())
+        total = sum(v for v in stats.values() if isinstance(v, (int, float)))
         shared_note = ""
         if self._shared_graph_ids:
             shared_note = f" (+{len(self._shared_graph_ids)} shared graphs)"
@@ -387,45 +497,52 @@ class PlugMemMemoryProvider(MemoryProvider):
         if total == 0:
             return (
                 "# PlugMem Memory\n"
-                f"Active. Empty knowledge graph{shared_note} — use plugmem_remember to store facts, "
-                "plugmem_learn to store procedures, and plugmem_recall to search.\n"
+                f"Active. Empty knowledge graph{shared_note} — use "
+                "plugmem_remember to store facts, plugmem_learn to store "
+                "procedures, and plugmem_recall to search.\n"
             )
         return (
             f"# PlugMem Memory\n"
-            f"Active. {total} knowledge units stored ({_format_stats(stats)}){shared_note}.\n"
+            f"Active. {total} knowledge units stored ({_format_stats(stats)})"
+            f"{shared_note}.\n"
             f"Use plugmem_remember for facts, plugmem_learn for procedures, "
             f"plugmem_recall to retrieve LLM-reasoned context.\n"
         )
 
     def prefetch(self, query: str, *, session_id: str = "") -> str:
         """Recall relevant context before each turn — queries personal + shared graphs."""
-        if not self._client or not query or len(query.strip()) < 10:
+        if not self._client or not query:
+            return ""
+        if len(query.strip()) < PREFETCH_MIN_QUERY_LEN:
             return ""
 
-        try:
-            # Query all graphs: personal first, then shared
-            all_results = []
-            sets = [("", self._graph_id)] + [("shared", gid) for gid in self._shared_graph_ids]
+        sets = [("", self._graph_id)] + [
+            ("shared", gid) for gid in self._shared_graph_ids
+        ]
+        all_results: List[Dict[str, Any]] = []
 
-            for label, gid in sets:
-                try:
+        for label, gid in sets:
+            try:
+
+                def _do():
                     result = self._client.reason(
                         gid,
                         observation=query,
                         session_id=session_id or self._session_id,
                     )
                     result["graph"] = label or gid
-                    all_results.append(result)
-                except PlugMemError:
-                    continue
+                    return result
 
-            merged = _merge_reasoning(all_results)
-            if not merged:
-                return ""
-            return f"## PlugMem Recall\n{merged}"
-        except PlugMemError as e:
-            logger.debug("PlugMem prefetch failed: %s", e)
+                result = _retry_call(_do)
+                all_results.append(result)
+            except PlugMemError:
+                logger.debug("PlugMem prefetch failed for graph %s", gid, exc_info=True)
+                continue
+
+        merged = _merge_reasoning(all_results)
+        if not merged:
             return ""
+        return f"## PlugMem Recall\n{merged}"
 
     def queue_prefetch(self, query: str, *, session_id: str = "") -> None:
         pass
@@ -444,18 +561,7 @@ class PlugMemMemoryProvider(MemoryProvider):
         self._turn_count += 1
 
         try:
-            steps = []
-            for msg in messages:
-                role = msg.get("role", "")
-                content = msg.get("content", "")
-                if role == "user" and content:
-                    steps.append({"observation": str(content), "action": ""})
-                elif role == "assistant" and content:
-                    if steps and not steps[-1].get("action"):
-                        steps[-1]["action"] = str(content)
-                    else:
-                        steps.append({"observation": "", "action": str(content)})
-
+            steps = _messages_to_steps(messages)
             if steps:
                 goal = user_content[:200] if user_content else "Agent turn"
                 self._client.insert_trajectory(
@@ -465,8 +571,8 @@ class PlugMemMemoryProvider(MemoryProvider):
                     session_id=session_id or self._session_id,
                 )
 
-            # Periodically consolidate (every 10 turns)
-            if self._turn_count % 10 == 0:
+            # Periodically consolidate
+            if self._turn_count % CONSOLIDATE_EVERY_N_TURNS == 0:
                 try:
                     self._client.consolidate(self._graph_id)
                 except PlugMemError:
@@ -474,7 +580,9 @@ class PlugMemMemoryProvider(MemoryProvider):
         except PlugMemError as e:
             logger.debug("PlugMem sync_turn failed: %s", e)
 
-    def handle_tool_call(self, tool_name: str, args: Dict[str, Any], **kwargs) -> str:
+    def handle_tool_call(
+        self, tool_name: str, args: Dict[str, Any], **kwargs
+    ) -> str:
         if tool_name == "plugmem_remember":
             return self._handle_remember(args)
         elif tool_name == "plugmem_recall":
@@ -486,12 +594,12 @@ class PlugMemMemoryProvider(MemoryProvider):
         return tool_error(f"Unknown tool: {tool_name}")
 
     def shutdown(self) -> None:
-        # Run final consolidation on shutdown
-        if self._client and self._turn_count > 0:
+        if self._client and self._turn_count > 0 and not self._consolidated_on_shutdown:
             try:
                 self._client.consolidate(self._graph_id)
             except PlugMemError:
                 pass
+        self._consolidated_on_shutdown = True
         self._client = None
 
     # -- Optional hooks ----------------------------------------------------
@@ -500,45 +608,57 @@ class PlugMemMemoryProvider(MemoryProvider):
         if not self._client or not messages:
             return
         try:
-            steps = []
-            for msg in messages:
-                role = msg.get("role", "")
-                content = msg.get("content", "")
-                if role == "user" and content:
-                    steps.append({"observation": str(content), "action": ""})
-                elif role == "assistant" and content:
-                    if steps and not steps[-1].get("action"):
-                        steps[-1]["action"] = str(content)
-                    else:
-                        steps.append({"observation": "", "action": str(content)})
-
+            steps = _messages_to_steps(messages)
             if steps:
-                goal = "Full agent session"
                 self._client.insert_trajectory(
                     self._graph_id,
-                    goal=goal,
+                    goal="Full agent session",
                     steps=steps,
                     session_id=self._session_id,
                 )
             self._client.consolidate(self._graph_id)
+            self._consolidated_on_shutdown = True
         except PlugMemError:
             pass
 
     def on_pre_compress(self, messages: List[Dict[str, Any]]) -> str:
+        """Extract durable facts from messages before context compression.
+
+        Returns the extracted reasoning text AND stores facts for future recall.
+        """
         if not self._client or not messages:
             return ""
         try:
             text_blob = "\n".join(
-                str(m.get("content", "")) for m in messages if m.get("content")
+                _extract_text_content(m.get("content", ""))
+                for m in messages
+                if m.get("content")
             )
             if len(text_blob) < 50:
                 return ""
 
-            result = self._client.reason(
-                self._graph_id,
-                observation=f"Extract durable facts from this conversation: {text_blob[:2000]}",
+            observation = (
+                f"Extract durable facts, decisions, and preferences from this "
+                f"conversation. Return them as a bullet list: {text_blob[:2000]}"
             )
-            return result.get("reasoning", "")
+            result = self._client.reason(self._graph_id, observation=observation)
+            reasoning = result.get("reasoning", "")
+
+            if reasoning and not _is_empty_reasoning(result):
+                # Store the extracted facts as semantic memories
+                try:
+                    self._client.insert_structured(
+                        self._graph_id,
+                        [{
+                            "semantic_memory": reasoning,
+                            "tags": ["compressed", "auto-extracted"],
+                        }],
+                        session_id=self._session_id,
+                    )
+                except PlugMemError:
+                    pass  # Best-effort; still return the reasoning text
+
+            return reasoning
         except PlugMemError:
             return ""
 
@@ -605,40 +725,33 @@ class PlugMemMemoryProvider(MemoryProvider):
                     session_id=self._session_id,
                 )
                 stats = _format_stats(result.get("stats", {}))
-                return json.dumps(
-                    {
-                        "status": "stored",
-                        "steps": len(args["steps"]),
-                        "graph_stats": stats,
-                    }
-                )
+                return json.dumps({
+                    "status": "stored",
+                    "steps": len(args["steps"]),
+                    "graph_stats": stats,
+                })
 
             # Semantic mode
             if args.get("text"):
-                semantic = [
-                    {
-                        "semantic_memory": args["text"],
-                        "tags": args.get("tags", []),
-                    }
-                ]
+                semantic = [{
+                    "semantic_memory": args["text"],
+                    "tags": args.get("tags", []),
+                }]
                 result = self._client.insert_structured(
                     self._graph_id,
                     semantic,
                     session_id=self._session_id,
                 )
                 stats = _format_stats(result.get("stats", {}))
-                return json.dumps(
-                    {
-                        "status": "remembered",
-                        "preview": _truncate(args["text"]),
-                        "graph_stats": stats,
-                    }
-                )
+                return json.dumps({
+                    "status": "remembered",
+                    "preview": _truncate(args["text"]),
+                    "graph_stats": stats,
+                })
 
-            return json.dumps(
-                {"error": "Provide 'text' (fact) or 'goal' + 'steps' (trajectory)."}
-            )
-
+            return json.dumps({
+                "error": "Provide 'text' (fact) or 'goal' + 'steps' (trajectory)."
+            })
         except PlugMemError as e:
             logger.error("plugmem_remember failed: %s", e)
             return json.dumps({"error": str(e), "status_code": e.status_code})
@@ -648,9 +761,10 @@ class PlugMemMemoryProvider(MemoryProvider):
             return json.dumps({"error": "PlugMem service not connected"})
 
         try:
-            # Query all graphs: personal + shared
-            all_results = []
-            sets = [("", self._graph_id)] + [("shared", gid) for gid in self._shared_graph_ids]
+            sets = [("", self._graph_id)] + [
+                ("shared", gid) for gid in self._shared_graph_ids
+            ]
+            all_results: List[Dict[str, Any]] = []
 
             for label, gid in sets:
                 try:
@@ -667,25 +781,25 @@ class PlugMemMemoryProvider(MemoryProvider):
 
             merged = _merge_reasoning(all_results)
             if not merged:
-                return json.dumps(
-                    {
-                        "result": "No relevant memories found in any graph.",
-                        "graphs_queried": len(sets),
-                    }
-                )
-            return json.dumps(
-                {
-                    "result": merged,
+                return json.dumps({
+                    "result": "No relevant memories found in any graph.",
                     "graphs_queried": len(sets),
-                    "mode": args.get("mode", ""),
-                }
-            )
+                })
+            return json.dumps({
+                "result": merged,
+                "graphs_queried": len(sets),
+                "mode": args.get("mode", ""),
+            })
         except PlugMemError as e:
             logger.error("plugmem_recall failed: %s", e)
             return json.dumps({"error": str(e), "status_code": e.status_code})
 
     def _handle_learn(self, args: dict) -> str:
-        """Store a procedural skill — structured as a trajectory with procedural tags."""
+        """Store a procedural skill as a trajectory.
+
+        Single atomic call — prefix 'Procedure:' in the goal so PlugMem's
+        structuring pipeline classifies it as procedural memory.
+        """
         if not self._client:
             return json.dumps({"error": "PlugMem service not connected"})
 
@@ -693,9 +807,7 @@ class PlugMemMemoryProvider(MemoryProvider):
             title = args["title"]
             description = args.get("description", "")
             steps = args["steps"]
-            tags = args.get("tags", [])
 
-            # Build a rich goal description so PlugMem classifies it as procedural
             goal_text = f"Procedure: {title}"
             if description:
                 goal_text += f" — {description}"
@@ -707,36 +819,27 @@ class PlugMemMemoryProvider(MemoryProvider):
                 session_id=self._session_id,
             )
 
-            # Also store as semantic memory with procedural tag for cross-reference
-            semantic_text = f"Procedure '{title}': {description or title}. Has {len(steps)} steps."
-            self._client.insert_structured(
-                self._graph_id,
-                [{"semantic_memory": semantic_text, "tags": tags + ["procedure"]}],
-                session_id=self._session_id,
-            )
-
             stats = _format_stats(result.get("stats", {}))
-            return json.dumps(
-                {
-                    "status": "learned",
-                    "procedure": title,
-                    "steps": len(steps),
-                    "graph_stats": stats,
-                }
-            )
+            return json.dumps({
+                "status": "learned",
+                "procedure": title,
+                "steps": len(steps),
+                "graph_stats": stats,
+            })
         except PlugMemError as e:
             logger.error("plugmem_learn failed: %s", e)
             return json.dumps({"error": str(e), "status_code": e.status_code})
 
     def _handle_procedure(self, args: dict) -> str:
-        """Search for a stored procedure."""
+        """Search for a stored procedure across all graphs."""
         if not self._client:
             return json.dumps({"error": "PlugMem service not connected"})
 
         try:
-            # Search all graphs for procedural knowledge matching the query
-            all_results = []
-            sets = [("", self._graph_id)] + [("shared", gid) for gid in self._shared_graph_ids]
+            sets = [("", self._graph_id)] + [
+                ("shared", gid) for gid in self._shared_graph_ids
+            ]
+            all_results: List[str] = []
 
             for label, gid in sets:
                 try:
@@ -747,24 +850,20 @@ class PlugMemMemoryProvider(MemoryProvider):
                         session_id=self._session_id,
                     )
                     reasoning = result.get("reasoning", "")
-                    if reasoning and "No relevant" not in reasoning:
+                    if reasoning and not _is_empty_reasoning(result):
                         all_results.append(reasoning)
                 except PlugMemError:
                     continue
 
             if not all_results:
-                return json.dumps(
-                    {
-                        "result": f"No procedure found for '{args['query']}'.",
-                        "graphs_queried": len(sets),
-                    }
-                )
-            return json.dumps(
-                {
-                    "result": "\n\n".join(all_results),
+                return json.dumps({
+                    "result": f"No procedure found for '{args['query']}'.",
                     "graphs_queried": len(sets),
-                }
-            )
+                })
+            return json.dumps({
+                "result": "\n\n".join(all_results),
+                "graphs_queried": len(sets),
+            })
         except PlugMemError as e:
             logger.error("plugmem_procedure failed: %s", e)
             return json.dumps({"error": str(e), "status_code": e.status_code})
