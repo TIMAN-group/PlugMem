@@ -107,6 +107,24 @@ R=$(curl -s -X POST "$BASE/graphs/$GRAPH/reason" -H 'Content-Type: application/j
 check "recall episode mentions NullReference" "Null" "$R"
 
 echo ""
+echo "=== 9. Raw retrieval mode ==="
+R=$(curl -s -X POST "$BASE/graphs/$GRAPH/retrieve" -H 'Content-Type: application/json' \
+  -d '{"observation":"What does Alex prefer for UI?"}')
+check "raw retrieval returns prompt" "reasoning_prompt" "$R"
+
+echo ""
+echo "=== 10. Per-call graph targeting ==="
+CUSTOM="${GRAPH}-custom"
+curl -s -X POST "$BASE/graphs" -H 'Content-Type: application/json' -d "{\"graph_id\":\"$CUSTOM\"}" > /dev/null
+curl -s -X POST "$BASE/graphs/$CUSTOM/memories" -H 'Content-Type: application/json' -d '{
+  "mode":"structured",
+  "semantic":[{"semantic_memory":"Alex writes in C# and Python","tags":["skill"]}]
+}' > /dev/null
+R=$(curl -s -X POST "$BASE/graphs/$CUSTOM/reason" -H 'Content-Type: application/json' \
+  -d '{"observation":"What languages does Alex use?"}')
+check "custom graph recall" "C#\\|Python" "$R"
+
+echo ""
 echo "==============================================="
 echo " Results: $PASS passed, $FAIL failed of $((PASS+FAIL))"
 echo "==============================================="

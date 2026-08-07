@@ -4,8 +4,8 @@ PlugMem Memory Provider for Hermes Agent.
 Persistent cross-session memory via a PlugMem knowledge graph service.
 Registers four tools: plugmem_remember, plugmem_recall, plugmem_learn, plugmem_procedure.
 
-Feature parity with PlugMem OpenClaw + Claude Code connectors, plus Hermes-native
-lifecycle hooks (prefetch, sync_turn, on_session_end, on_pre_compress, on_delegation).
+Feature parity with PlugMem OpenClaw connector, plus Hermes-native lifecycle hooks
+(prefetch, sync_turn, on_session_end, on_pre_compress, on_session_switch).
 
 Installation:
     1. Start PlugMem service:  uvicorn plugmem.api.app:app --port 8080
