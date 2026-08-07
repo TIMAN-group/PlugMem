@@ -151,7 +151,7 @@ class PlugMemClient:
     # -- Consolidation --
 
     def consolidate(self, graph_id: str) -> Dict[str, Any]:
-        return self._request("POST", f"{self._API_PREFIX}/graphs/{graph_id}/consolidate")
+        return self._request("POST", f"{self._API_PREFIX}/graphs/{graph_id}/consolidate", {})
 
 
 # ---------------------------------------------------------------------------
