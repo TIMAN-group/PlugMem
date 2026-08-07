@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 import urllib.request
 import urllib.error
@@ -39,23 +40,8 @@ DEFAULT_GRAPH_ID = "hermes-default"
 
 
 def _env(key: str, default: str = "") -> str:
-    """Read an env var, falling back to $HERMES_HOME/.env style resolution."""
-    import os
-
-    val = os.environ.get(key, "")
-    if val:
-        return val
-    # Try HERMES_HOME/.env via dotenv
-    try:
-        from dotenv import dotenv_values
-        hermes_home = os.environ.get("HERMES_HOME", os.path.expanduser("~/.hermes"))
-        env_file = os.path.join(hermes_home, ".env")
-        if os.path.isfile(env_file):
-            vals = dotenv_values(env_file)
-            val = vals.get(key, "")
-    except Exception:
-        pass
-    return val or default
+    """Read an env var set by Hermes (from profile .env). No dotenv fallback."""
+    return os.environ.get(key, default)
 
 
 # ---------------------------------------------------------------------------
@@ -274,13 +260,9 @@ class PlugMemMemoryProvider(MemoryProvider):
         return "plugmem"
 
     def is_available(self) -> bool:
-        """PlugMem is available if we can reach the service."""
-        try:
-            client = _get_client()
-            client.health()
-            return True
-        except Exception:
-            return False
+        """Check if config is set — lightweight, no network call."""
+        base = os.environ.get("PLUGMEM_BASE_URL", DEFAULT_BASE_URL)
+        return bool(base)
 
     def initialize(self, session_id: str, **kwargs) -> None:
         self._client = _get_client()
