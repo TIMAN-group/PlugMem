@@ -409,80 +409,6 @@ def _messages_to_steps(messages: List[Dict[str, Any]]) -> List[Dict[str, str]]:
     return steps
 
 
-def _detect_corrections(messages: List[Dict[str, Any]]) -> List[Dict[str, str]]:
-    """Detect failure→success correction patterns across tool calls.
-
-    When the agent calls a tool, gets an error, and then adjusts its
-    approach, extract the correction as a learnable recipe.
-
-    Returns a list of correction steps: [{"observation": "tried X, got error",
-    "action": "adjusted to Y"}, ...]
-    """
-    corrections: List[Dict[str, str]] = []
-    last_tool_error: Optional[str] = None
-    last_tool_name: Optional[str] = None
-    last_attempt: Optional[str] = None
-
-    for msg in messages:
-        role = msg.get("role", "")
-
-        if role == "assistant":
-            text = _extract_text_content(msg.get("content", ""))
-            tool_calls = msg.get("tool_calls", [])
-            if tool_calls:
-                names = [tc.get("function", {}).get("name", "?") for tc in tool_calls]
-                attempt = f"called {', '.join(names)}"
-                if text:
-                    attempt = f"{_truncate(text, 100)} then {attempt}"
-                if last_tool_error and last_attempt:
-                    corrections.append({
-                        "observation": f"Attempted: {last_attempt}. Error: {last_tool_error}",
-                        "action": f"Corrected by: {attempt}",
-                    })
-                    last_tool_error = None
-                last_attempt = attempt
-            elif text and last_tool_error and last_attempt:
-                corrections.append({
-                    "observation": f"Attempted: {last_attempt}. Error: {last_tool_error}",
-                    "action": f"Corrected by: {_truncate(text, 200)}",
-                })
-                last_tool_error = None
-
-        elif role == "tool":
-            content = msg.get("content", "")
-            is_error = False
-            error_text = ""
-            if isinstance(content, str) and content.strip():
-                # Detect error indicators
-                lower = content.lower()
-                if any(
-                    kw in lower
-                    for kw in ("error", "failed", "exception", "traceback", "refused")
-                ):
-                    is_error = True
-                    # Try to extract the actual error message
-                    try:
-                        parsed = json.loads(content)
-                        error_text = str(parsed.get("error", parsed.get("message", content)))
-                    except (json.JSONDecodeError, TypeError):
-                        error_text = _truncate(content, 200)
-            elif isinstance(content, dict):
-                err = content.get("error", "")
-                if err:
-                    is_error = True
-                    error_text = str(err)
-
-            if is_error and error_text:
-                last_tool_error = error_text
-                last_tool_name = msg.get("name", "tool")
-
-        elif role == "user":
-            # New user message resets the correction context
-            last_tool_error = None
-            last_attempt = None
-
-    return corrections
-
 
 def _get_client() -> PlugMemClient:
     return PlugMemClient(
@@ -675,18 +601,6 @@ class PlugMemMemoryProvider(MemoryProvider):
                     session_id=session_id or self._session_id,
                 )
 
-            # Detect and store correction patterns (failure→success recipes)
-            if self._auto_remember_enabled:
-                corrections = _detect_corrections(messages)
-                if corrections and len(corrections) >= 1:
-                    goal = f"Correction: {user_content[:150]}" if user_content else "Correction recipe"
-                    self._client.insert_trajectory(
-                        self._graph_id,
-                        goal=goal,
-                        steps=corrections,
-                        session_id=session_id or self._session_id,
-                    )
-
             # Periodic consolidation
             if self._turn_count % CONSOLIDATE_EVERY_N_TURNS == 0:
                 try:
@@ -785,28 +699,6 @@ class PlugMemMemoryProvider(MemoryProvider):
             return reasoning
         except PlugMemError:
             return ""
-
-    def on_delegation(
-        self, task: str, result: str, *, child_session_id: str = "", **kwargs
-    ) -> None:
-        """Store subagent delegation as a trajectory for the parent."""
-        if not self._client or not task:
-            return
-        if not self._auto_remember_enabled:
-            return
-        try:
-            steps = [
-                {"observation": f"Delegated: {task[:300]}", "action": ""},
-                {"observation": "", "action": f"Result: {_truncate(result, 500)}"},
-            ]
-            self._client.insert_trajectory(
-                self._graph_id,
-                goal=f"Delegation: {task[:150]}",
-                steps=steps,
-                session_id=self._session_id or child_session_id,
-            )
-        except PlugMemError:
-            pass
 
     def on_memory_write(
         self, action: str, target: str, content: str, metadata=None
