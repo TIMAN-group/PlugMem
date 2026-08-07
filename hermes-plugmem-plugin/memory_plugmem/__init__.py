@@ -9,8 +9,9 @@ Feature parity with PlugMem OpenClaw connector, plus Hermes-native lifecycle hoo
 
 Installation:
     1. Start PlugMem service:  uvicorn plugmem.api.app:app --port 8080
-    2. Symlink: ln -sf <repo>/hermes-plugmem-plugin/memory_plugmem
-                ~/.hermes/hermes-agent/plugins/memory/plugmem
+    2. Copy or symlink this directory into Hermes plugins:
+       cp -r <repo>/hermes-plugmem-plugin/memory_plugmem
+              ~/.hermes/hermes-agent/plugins/memory/plugmem
     3. Configure:  hermes config set memory.provider plugmem
 
 Config (in $HERMES_HOME/.env):
@@ -29,6 +30,7 @@ import os
 import time
 import urllib.request
 import urllib.error
+import urllib.parse
 from typing import Any, Dict, List, Optional
 
 from agent.memory_provider import MemoryProvider
@@ -83,6 +85,10 @@ class PlugMemClient:
         self.api_key = api_key
         self.timeout = timeout
 
+    @staticmethod
+    def _encode(path_segment: str) -> str:
+        return urllib.parse.quote(path_segment, safe="")
+
     def _request(
         self, method: str, path: str, body: Dict[str, Any] | None = None
     ) -> Dict[str, Any]:
@@ -118,13 +124,36 @@ class PlugMemClient:
         return self._request("GET", f"{self._API_PREFIX}/health")
 
     def ensure_graph(self, graph_id: str) -> Dict[str, Any]:
+        """Ensure a graph exists. Only POST-creates on 404; re-raises other errors."""
         try:
-            return self._request("GET", f"{self._API_PREFIX}/graphs/{graph_id}/stats")
+            return self._request(
+                "GET",
+                f"{self._API_PREFIX}/graphs/{self._encode(graph_id)}/stats",
+            )
+        except PlugMemError as e:
+            if e.status_code == 404:
+                return self._request(
+                    "POST",
+                    f"{self._API_PREFIX}/graphs",
+                    {"graph_id": graph_id},
+                )
+            raise
+
+    def probe_graph(self, graph_id: str) -> bool:
+        """Lightweight read-only probe — returns True if graph exists."""
+        try:
+            self._request(
+                "GET",
+                f"{self._API_PREFIX}/graphs/{self._encode(graph_id)}/stats",
+            )
+            return True
         except PlugMemError:
-            return self._request("POST", f"{self._API_PREFIX}/graphs", {"graph_id": graph_id})
+            return False
 
     def get_stats(self, graph_id: str) -> Dict[str, Any]:
-        return self._request("GET", f"{self._API_PREFIX}/graphs/{graph_id}/stats")
+        return self._request(
+            "GET", f"{self._API_PREFIX}/graphs/{self._encode(graph_id)}/stats"
+        )
 
     # -- Memory --
 
@@ -134,7 +163,9 @@ class PlugMemClient:
         body: Dict[str, Any] = {"mode": "structured", "semantic": semantic}
         body.update(extra)
         return self._request(
-            "POST", f"{self._API_PREFIX}/graphs/{graph_id}/memories", body
+            "POST",
+            f"{self._API_PREFIX}/graphs/{self._encode(graph_id)}/memories",
+            body,
         )
 
     def insert_trajectory(
@@ -148,7 +179,9 @@ class PlugMemClient:
         if session_id:
             body["session_id"] = session_id
         return self._request(
-            "POST", f"{self._API_PREFIX}/graphs/{graph_id}/memories", body
+            "POST",
+            f"{self._API_PREFIX}/graphs/{self._encode(graph_id)}/memories",
+            body,
         )
 
     # -- Retrieval --
@@ -161,7 +194,9 @@ class PlugMemClient:
             body["mode"] = mode
         body.update(kwargs)
         return self._request(
-            "POST", f"{self._API_PREFIX}/graphs/{graph_id}/reason", body
+            "POST",
+            f"{self._API_PREFIX}/graphs/{self._encode(graph_id)}/reason",
+            body,
         )
 
     def retrieve(
@@ -172,14 +207,18 @@ class PlugMemClient:
             body["mode"] = mode
         body.update(kwargs)
         return self._request(
-            "POST", f"{self._API_PREFIX}/graphs/{graph_id}/retrieve", body
+            "POST",
+            f"{self._API_PREFIX}/graphs/{self._encode(graph_id)}/retrieve",
+            body,
         )
 
     # -- Consolidation --
 
     def consolidate(self, graph_id: str) -> Dict[str, Any]:
         return self._request(
-            "POST", f"{self._API_PREFIX}/graphs/{graph_id}/consolidate", {}
+            "POST",
+            f"{self._API_PREFIX}/graphs/{self._encode(graph_id)}/consolidate",
+            {},
         )
 
 
@@ -265,8 +304,7 @@ RECALL_SCHEMA = {
             "raw": {
                 "type": "boolean",
                 "description": (
-                    "If true, return the raw retrieval prompt instead of LLM reasoning. "
-                    "Useful for debugging or when the base agent wants to reason directly."
+                    "If true, return the raw retrieval prompt instead of LLM reasoning."
                 ),
                 "default": False,
             },
@@ -378,50 +416,93 @@ def _extract_text_content(content: Any) -> str:
 
 
 def _messages_to_steps(messages: List[Dict[str, Any]]) -> List[Dict[str, str]]:
-    """Convert agent messages to observation/action steps."""
+    """Convert agent messages to observation/action steps.
+
+    Buffers consecutive tool results before flushing them as a single
+    observation.  Mimics the OpenClaw reference shape so PlugMem's
+    structuring pipeline sees meaningful observation/action pairs.
+    """
     steps: List[Dict[str, str]] = []
+    pending_tool_results: List[str] = []
+
+    def _flush_tool_results():
+        if not pending_tool_results:
+            return
+        combined = "\n".join(pending_tool_results)
+        pending_tool_results.clear()
+        if steps and not steps[-1].get("action"):
+            steps[-1]["observation"] = (
+                steps[-1]["observation"] + "\n" + combined
+                if steps[-1]["observation"]
+                else combined
+            )
+        else:
+            steps.append({"observation": combined, "action": ""})
+
     for msg in messages:
         role = msg.get("role", "")
-        text = _extract_text_content(msg.get("content", ""))
-        if not text:
-            # Check for tool calls in assistant messages
-            if role == "assistant":
-                tool_calls = msg.get("tool_calls", [])
-                if tool_calls:
-                    names = [tc.get("function", {}).get("name", "?") for tc in tool_calls]
-                    text = f"[tool calls: {', '.join(names)}]"
+
+        if role == "user":
+            _flush_tool_results()
+            text = _extract_text_content(msg.get("content", ""))
             if not text:
                 continue
-        if role == "user":
-            steps.append({"observation": text, "action": ""})
+            if steps and not steps[-1].get("action"):
+                steps[-1]["observation"] = (
+                    steps[-1]["observation"] + "\n" + text
+                    if steps[-1]["observation"]
+                    else text
+                )
+            else:
+                steps.append({"observation": text, "action": ""})
+
         elif role == "assistant":
+            _flush_tool_results()
+            text = _extract_text_content(msg.get("content", ""))
+            tool_calls = msg.get("tool_calls", [])
+            if tool_calls:
+                names = [
+                    tc.get("function", {}).get("name", "?") for tc in tool_calls
+                ]
+                tool_text = f"[tool calls: {', '.join(names)}]"
+                text = f"{text}\n{tool_text}" if text else tool_text
+            if not text:
+                continue
             if steps and not steps[-1].get("action"):
                 steps[-1]["action"] = text
             else:
                 steps.append({"observation": "", "action": text})
+
         elif role == "tool":
-            # Tool results become observations for the next assistant action
             tool_name = msg.get("name", msg.get("tool_call_id", "tool"))
             result_text = _extract_text_content(msg.get("content", ""))
             label = f"[{tool_name} result]"
             obs = f"{label} {_truncate(result_text, 300)}" if result_text else label
-            steps.append({"observation": obs, "action": ""})
-    return steps
+            pending_tool_results.append(obs)
 
+    _flush_tool_results()
+    return [s for s in steps if s.get("observation") or s.get("action")]
 
 
 def _get_client() -> PlugMemClient:
     return PlugMemClient(
         base_url=os.environ.get("PLUGMEM_BASE_URL", DEFAULT_BASE_URL),
         api_key=os.environ.get("PLUGMEM_API_KEY", ""),
-        timeout=int(os.environ.get("PLUGMEM_TIMEOUT", "30")),
+        timeout=_env_int("PLUGMEM_TIMEOUT", 30),
     )
 
 
 def _is_empty_reasoning(result: Dict[str, Any]) -> bool:
+    """Check if a reasoning result is genuinely empty.
+
+    Relies on PlugMem's structured markdown output format:
+    \"### Information\\nnull\" when no memories were found.
+    Isolated here so upstream format changes only require one edit.
+    """
     reasoning = result.get("reasoning", "")
     if not reasoning or not reasoning.strip():
         return True
+    # Master pattern: the Information section is explicit about null
     if "### Information\nnull" in reasoning:
         return True
     if "No relevant" in reasoning and "### Information" in reasoning:
@@ -442,7 +523,9 @@ def _merge_reasoning(results: List[Dict[str, Any]]) -> str:
     return "\n\n".join(parts) if parts else ""
 
 
-def _retry_call(fn, max_retries: int = PREFETCH_MAX_RETRIES, delay: float = PREFETCH_RETRY_DELAY):
+def _retry_call(
+    fn, max_retries: int = PREFETCH_MAX_RETRIES, delay: float = PREFETCH_RETRY_DELAY
+):
     last_exc = None
     for attempt in range(max_retries + 1):
         try:
@@ -463,7 +546,6 @@ class PlugMemMemoryProvider(MemoryProvider):
     """Hermes memory provider backed by a PlugMem knowledge graph service."""
 
     def __init__(self, config: dict | None = None):
-        self._config = config or {}
         self._client: PlugMemClient | None = None
         self._graph_id = ""
         self._session_id = ""
@@ -472,6 +554,7 @@ class PlugMemMemoryProvider(MemoryProvider):
         self._consolidated = False
         self._auto_remember_enabled = True
         self._auto_remember_min_steps = 2
+        self._is_primary_context = True
 
     # -- Abstract methods -------------------------------------------------
 
@@ -480,7 +563,12 @@ class PlugMemMemoryProvider(MemoryProvider):
         return "plugmem"
 
     def is_available(self) -> bool:
-        return bool(os.environ.get("PLUGMEM_BASE_URL", DEFAULT_BASE_URL))
+        """Provider is intentionally always available when present — it degrades gracefully.
+
+        The provider registers regardless of whether the service is running;
+        tools return error messages when the service is unreachable.
+        """
+        return True
 
     def initialize(self, session_id: str, **kwargs) -> None:
         self._client = _get_client()
@@ -491,6 +579,10 @@ class PlugMemMemoryProvider(MemoryProvider):
         self._auto_remember_enabled = _env_bool("PLUGMEM_AUTO_REMEMBER_ENABLED", True)
         self._auto_remember_min_steps = _env_int("PLUGMEM_AUTO_REMEMBER_MIN_STEPS", 2)
 
+        # Skip writes for non-primary contexts (cron sys prompts, flush sessions)
+        agent_context = kwargs.get("agent_context", "primary")
+        self._is_primary_context = agent_context in ("primary", "")
+
         shared_raw = os.environ.get("PLUGMEM_SHARED_GRAPH_IDS", "")
         self._shared_graph_ids = (
             [g.strip() for g in shared_raw.split(",") if g.strip()]
@@ -500,8 +592,13 @@ class PlugMemMemoryProvider(MemoryProvider):
 
         try:
             self._client.ensure_graph(self._graph_id)
+            # Shared graphs are read-only: probe, don't create
             for gid in self._shared_graph_ids:
-                self._client.ensure_graph(gid)
+                if not self._client.probe_graph(gid):
+                    logger.warning(
+                        "Shared graph '%s' not found — queries to it will fail gracefully",
+                        gid,
+                    )
         except PlugMemError as e:
             logger.warning("PlugMem graph init failed: %s", e)
 
@@ -523,7 +620,9 @@ class PlugMemMemoryProvider(MemoryProvider):
             )
 
         total = sum(v for v in stats.values() if isinstance(v, (int, float)))
-        shared_note = f" (+{len(self._shared_graph_ids)} shared)" if self._shared_graph_ids else ""
+        shared_note = (
+            f" (+{len(self._shared_graph_ids)} shared)" if self._shared_graph_ids else ""
+        )
 
         if total == 0:
             return (
@@ -565,16 +664,15 @@ class PlugMemMemoryProvider(MemoryProvider):
                 result = _retry_call(_do)
                 all_results.append(result)
             except PlugMemError:
-                logger.debug("PlugMem prefetch failed for graph %s", gid, exc_info=True)
+                logger.debug(
+                    "PlugMem prefetch failed for graph %s", gid, exc_info=True
+                )
                 continue
 
         merged = _merge_reasoning(all_results)
         if not merged:
             return ""
         return f"## PlugMem Recall\n{merged}"
-
-    def queue_prefetch(self, query: str, *, session_id: str = "") -> None:
-        pass
 
     def sync_turn(
         self,
@@ -586,20 +684,23 @@ class PlugMemMemoryProvider(MemoryProvider):
     ) -> None:
         if not self._client or not messages:
             return
+        if not self._is_primary_context:
+            return
 
         self._turn_count += 1
 
         try:
-            # Store full turn as episodic trajectory
-            steps = _messages_to_steps(messages)
-            if steps and len(steps) >= self._auto_remember_min_steps:
-                goal = user_content[:200] if user_content else "Agent turn"
-                self._client.insert_trajectory(
-                    self._graph_id,
-                    goal=goal,
-                    steps=steps,
-                    session_id=session_id or self._session_id,
-                )
+            # Store full turn as episodic trajectory (honors auto-remember config)
+            if self._auto_remember_enabled:
+                steps = _messages_to_steps(messages)
+                if steps and len(steps) >= self._auto_remember_min_steps:
+                    goal = user_content[:200] if user_content else "Agent turn"
+                    self._client.insert_trajectory(
+                        self._graph_id,
+                        goal=goal,
+                        steps=steps,
+                        session_id=session_id or self._session_id,
+                    )
 
             # Periodic consolidation
             if self._turn_count % CONSOLIDATE_EVERY_N_TURNS == 0:
@@ -634,9 +735,6 @@ class PlugMemMemoryProvider(MemoryProvider):
 
     # -- Optional hooks ----------------------------------------------------
 
-    def on_turn_start(self, turn_number: int, message: str, **kwargs) -> None:
-        pass
-
     def on_session_switch(
         self, new_session_id: str, *, reset: bool = False, **kwargs
     ) -> None:
@@ -648,6 +746,8 @@ class PlugMemMemoryProvider(MemoryProvider):
 
     def on_session_end(self, messages: List[Dict[str, Any]]) -> None:
         if not self._client or not messages:
+            return
+        if not self._is_primary_context:
             return
         try:
             steps = _messages_to_steps(messages)
@@ -687,10 +787,12 @@ class PlugMemMemoryProvider(MemoryProvider):
                 try:
                     self._client.insert_structured(
                         self._graph_id,
-                        [{
-                            "semantic_memory": reasoning,
-                            "tags": ["compressed", "auto-extracted"],
-                        }],
+                        [
+                            {
+                                "semantic_memory": reasoning,
+                                "tags": ["compressed", "auto-extracted"],
+                            }
+                        ],
                         session_id=self._session_id,
                     )
                 except PlugMemError:
@@ -703,16 +805,26 @@ class PlugMemMemoryProvider(MemoryProvider):
     def on_memory_write(
         self, action: str, target: str, content: str, metadata=None
     ) -> None:
-        if action == "add" and self._client and content:
-            try:
-                tags = ["memory" if target == "memory" else "user_profile"]
-                self._client.insert_structured(
-                    self._graph_id,
-                    [{"semantic_memory": content, "tags": tags}],
-                    session_id=self._session_id,
-                )
-            except PlugMemError as e:
-                logger.debug("PlugMem mirror failed: %s", e)
+        """Mirror built-in memory writes to PlugMem.
+
+        Note: PlugMem stores are append-only; replace/remove actions are
+        recorded as tombstone entries with provenance so the graph captures
+        the full history even though old facts are not deleted.
+        """
+        if not self._client or not content:
+            return
+        try:
+            tags = ["memory" if target == "memory" else "user_profile", f"action:{action}"]
+            entry: Dict[str, Any] = {"semantic_memory": content, "tags": tags}
+            if action in ("replace", "remove"):
+                entry["semantic_memory"] = f"[{action.upper()}] {content}"
+            self._client.insert_structured(
+                self._graph_id,
+                [entry],
+                session_id=self._session_id,
+            )
+        except PlugMemError as e:
+            logger.debug("PlugMem mirror failed: %s", e)
 
     # -- Config ------------------------------------------------------------
 
@@ -743,7 +855,7 @@ class PlugMemMemoryProvider(MemoryProvider):
             },
             {
                 "key": "auto_remember_enabled",
-                "description": "Auto-store turns and correction patterns",
+                "description": "Auto-store turns as episodic trajectories",
                 "type": "boolean",
                 "default": True,
                 "env_var": "PLUGMEM_AUTO_REMEMBER_ENABLED",
@@ -765,6 +877,26 @@ class PlugMemMemoryProvider(MemoryProvider):
     def _resolve_session(self, args: dict) -> str:
         return args.get("session_id") or self._session_id
 
+    @staticmethod
+    def _fan_out_results(
+        sets: List[tuple], client: "PlugMemClient", query_fn, session_id: str
+    ) -> tuple:
+        """Query multiple graphs, tracking successes and per-graph errors."""
+        results: List[Dict[str, Any]] = []
+        errors: List[Dict[str, str]] = []
+        for label, gid in sets:
+            try:
+                result = query_fn(gid)
+                result["graph"] = label or gid
+                results.append(result)
+            except PlugMemError as e:
+                errors.append({
+                    "graph": label or gid,
+                    "error": str(e),
+                    "status_code": e.status_code,
+                })
+        return results, errors
+
     def _handle_remember(self, args: dict) -> str:
         if not self._client:
             return json.dumps({"error": "PlugMem service not connected"})
@@ -774,7 +906,10 @@ class PlugMemMemoryProvider(MemoryProvider):
 
             if args.get("steps") and args.get("goal"):
                 result = self._client.insert_trajectory(
-                    gid, goal=args["goal"], steps=args["steps"], session_id=sid,
+                    gid,
+                    goal=args["goal"],
+                    steps=args["steps"],
+                    session_id=sid,
                 )
                 return json.dumps({
                     "status": "stored",
@@ -786,7 +921,12 @@ class PlugMemMemoryProvider(MemoryProvider):
             if args.get("text"):
                 result = self._client.insert_structured(
                     gid,
-                    [{"semantic_memory": args["text"], "tags": args.get("tags", [])}],
+                    [
+                        {
+                            "semantic_memory": args["text"],
+                            "tags": args.get("tags", []),
+                        }
+                    ],
                     session_id=sid,
                 )
                 return json.dumps({
@@ -811,33 +951,37 @@ class PlugMemMemoryProvider(MemoryProvider):
             sets = [("", primary)] + [
                 ("shared", gid) for gid in self._shared_graph_ids if gid != primary
             ]
-            all_results: List[Dict[str, Any]] = []
             raw_mode = args.get("raw", False)
 
-            for label, gid in sets:
-                try:
-                    if raw_mode:
-                        result = self._client.retrieve(
-                            gid,
-                            observation=args["observation"],
-                            mode=args.get("mode", ""),
-                        )
-                    else:
-                        result = self._client.reason(
-                            gid,
-                            observation=args["observation"],
-                            mode=args.get("mode", ""),
-                            session_id=self._session_id,
-                        )
-                    result["graph"] = label or gid
-                    all_results.append(result)
-                except PlugMemError:
-                    continue
+            def _query(gid):
+                if raw_mode:
+                    return self._client.retrieve(
+                        gid,
+                        observation=args["observation"],
+                        mode=args.get("mode", ""),
+                    )
+                return self._client.reason(
+                    gid,
+                    observation=args["observation"],
+                    mode=args.get("mode", ""),
+                    session_id=self._session_id,
+                )
+
+            results, errors = self._fan_out_results(
+                sets, self._client, _query, self._session_id
+            )
+
+            # All failed → surface the error, don't pretend it's empty
+            if not results and errors:
+                return json.dumps({
+                    "error": "All graph queries failed",
+                    "failures": errors,
+                    "graphs_queried": len(sets),
+                })
 
             if raw_mode:
-                # Return raw retrieval prompts for debugging
                 parts = []
-                for r in all_results:
+                for r in results:
                     prompt = r.get("reasoning_prompt", [])
                     graph = r.get("graph", "")
                     prefix = f"[{graph}] " if graph else ""
@@ -848,16 +992,26 @@ class PlugMemMemoryProvider(MemoryProvider):
                     parts.append(f"{prefix}{r.get('mode', '')}\n{prompt_text}")
                 merged = "\n\n---\n\n".join(parts) if parts else "No results."
             else:
-                merged = _merge_reasoning(all_results)
+                merged = _merge_reasoning(results)
                 if not merged:
+                    if errors:
+                        # Partial success — show what we got + failures
+                        return json.dumps({
+                            "result": "Some graphs returned no memories.",
+                            "partial_failures": errors,
+                            "graphs_queried": len(sets),
+                        })
                     merged = "No relevant memories found in any graph."
 
-            return json.dumps({
+            response: Dict[str, Any] = {
                 "result": merged,
                 "graphs_queried": len(sets),
                 "mode": args.get("mode", ""),
                 "raw": raw_mode,
-            })
+            }
+            if errors:
+                response["errors"] = errors
+            return json.dumps(response)
         except PlugMemError as e:
             logger.error("plugmem_recall failed: %s", e)
             return json.dumps({"error": str(e), "status_code": e.status_code})
@@ -876,7 +1030,10 @@ class PlugMemMemoryProvider(MemoryProvider):
                 goal_text += f" — {description}"
 
             result = self._client.insert_trajectory(
-                gid, goal=goal_text, steps=steps, session_id=self._session_id,
+                gid,
+                goal=goal_text,
+                steps=steps,
+                session_id=self._session_id,
             )
             return json.dumps({
                 "status": "learned",
@@ -897,31 +1054,49 @@ class PlugMemMemoryProvider(MemoryProvider):
             sets = [("", gid)] + [
                 ("shared", sgid) for sgid in self._shared_graph_ids if sgid != gid
             ]
-            all_results: List[str] = []
 
-            for label, sgid in sets:
-                try:
-                    result = self._client.reason(
-                        sgid,
-                        observation=f"Find the procedure for: {args['query']}",
-                        mode="procedural_memory",
-                        session_id=self._session_id,
-                    )
-                    reasoning = result.get("reasoning", "")
-                    if reasoning and not _is_empty_reasoning(result):
-                        all_results.append(reasoning)
-                except PlugMemError:
-                    continue
+            def _query(sgid):
+                return self._client.reason(
+                    sgid,
+                    observation=f"Find the procedure for: {args['query']}",
+                    mode="procedural_memory",
+                    session_id=self._session_id,
+                )
 
-            if not all_results:
+            results, errors = self._fan_out_results(
+                sets, self._client, _query, self._session_id
+            )
+
+            # All failed → surface the error
+            if not results and errors:
                 return json.dumps({
-                    "result": f"No procedure found for '{args['query']}'.",
+                    "error": "All graph queries failed",
+                    "failures": errors,
                     "graphs_queried": len(sets),
                 })
-            return json.dumps({
-                "result": "\n\n".join(all_results),
+
+            all_reasoning = [
+                r.get("reasoning", "")
+                for r in results
+                if r.get("reasoning") and not _is_empty_reasoning(r)
+            ]
+
+            if not all_reasoning:
+                response = {
+                    "result": f"No procedure found for '{args['query']}'.",
+                    "graphs_queried": len(sets),
+                }
+                if errors:
+                    response["errors"] = errors
+                return json.dumps(response)
+
+            response = {
+                "result": "\n\n".join(all_reasoning),
                 "graphs_queried": len(sets),
-            })
+            }
+            if errors:
+                response["errors"] = errors
+            return json.dumps(response)
         except PlugMemError as e:
             logger.error("plugmem_procedure failed: %s", e)
             return json.dumps({"error": str(e), "status_code": e.status_code})
