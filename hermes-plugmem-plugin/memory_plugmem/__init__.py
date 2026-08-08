@@ -591,7 +591,8 @@ class PlugMemMemoryProvider(MemoryProvider):
         )
 
         try:
-            self._client.ensure_graph(self._graph_id)
+            if self._is_primary_context:
+                self._client.ensure_graph(self._graph_id)
             # Shared graphs are read-only: probe, don't create
             for gid in self._shared_graph_ids:
                 if not self._client.probe_graph(gid):
@@ -645,7 +646,7 @@ class PlugMemMemoryProvider(MemoryProvider):
             return ""
 
         sets = [("", self._graph_id)] + [
-            ("shared", gid) for gid in self._shared_graph_ids
+            (gid, gid) for gid in self._shared_graph_ids
         ]
         all_results: List[Dict[str, Any]] = []
 
@@ -767,6 +768,8 @@ class PlugMemMemoryProvider(MemoryProvider):
         """Extract durable facts before context compression — store + return."""
         if not self._client or not messages:
             return ""
+        if not self._is_primary_context:
+            return ""
         try:
             text_blob = "\n".join(
                 _extract_text_content(m.get("content", ""))
@@ -812,6 +815,8 @@ class PlugMemMemoryProvider(MemoryProvider):
         the full history even though old facts are not deleted.
         """
         if not self._client or not content:
+            return
+        if not self._is_primary_context:
             return
         try:
             tags = ["memory" if target == "memory" else "user_profile", f"action:{action}"]
@@ -949,7 +954,7 @@ class PlugMemMemoryProvider(MemoryProvider):
         try:
             primary = self._resolve_graph(args)
             sets = [("", primary)] + [
-                ("shared", gid) for gid in self._shared_graph_ids if gid != primary
+                (gid, gid) for gid in self._shared_graph_ids if gid != primary
             ]
             raw_mode = args.get("raw", False)
 
@@ -1052,7 +1057,7 @@ class PlugMemMemoryProvider(MemoryProvider):
         try:
             gid = self._resolve_graph(args)
             sets = [("", gid)] + [
-                ("shared", sgid) for sgid in self._shared_graph_ids if sgid != gid
+                (sgid, sgid) for sgid in self._shared_graph_ids if sgid != gid
             ]
 
             def _query(sgid):
