@@ -38,8 +38,8 @@ _SENTINEL = "\x00"
 
 def decode_path_preserving_slashes(raw_path: str) -> str:
     """Percent-decode a path, leaving encoded slashes encoded."""
-    masked = raw_path.replace("%2F", _SENTINEL).replace("%2f", _SENTINEL)
-    return unquote(masked).replace(_SENTINEL, "%2F")
+    parts = raw_path.replace("%2f", "%2F").split("%2F")
+    return "%2F".join(unquote(p) for p in parts)
 
 
 class EncodedSlashPathMiddleware:
