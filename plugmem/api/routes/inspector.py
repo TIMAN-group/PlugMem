@@ -20,9 +20,15 @@ from plugmem.api.schemas import (
     SessionTimelineResponse,
     TopologyResponse,
 )
+from plugmem.api.urlsafe import UnquotedPathParamsRoute
 from plugmem.graph_manager import GraphManager
 
-router = APIRouter(prefix="/graphs", tags=["inspector"], dependencies=[Depends(require_api_key)])
+router = APIRouter(
+    prefix="/graphs",
+    tags=["inspector"],
+    dependencies=[Depends(require_api_key)],
+    route_class=UnquotedPathParamsRoute,
+)
 
 NODE_TYPES = ("semantic", "procedural", "tag", "subgoal", "episodic")
 
