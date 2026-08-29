@@ -167,7 +167,17 @@ def _lookup_for_type(graph, node_type: str):
 # ------------------------------------------------------------------ #
 
 
-@router.get("/{graph_id}/search", response_model=SearchResponse)
+@router.get(
+    "/{graph_id}/search",
+    response_model=SearchResponse,
+    summary="关键词/全量列举通道（子串过滤，不经向量路径）",
+    description=(
+        "P1-6 接口语义消歧：本端点是节点文本的 casefold 子串过滤，"
+        "用于【不带 q 的全量列举（同步器）】与【显式单关键词兜底召回（R2 通道）】。"
+        "不执行 embedding/向量检索；多词查询会因整串子串匹配而返回空。"
+        "语义检索一律走 POST /{graph_id}/retrieve，插件层 memory_search 禁止路由到本端点做语义召回。"
+    ),
+)
 async def search_nodes(
     graph_id: str,
     q: str = "",
