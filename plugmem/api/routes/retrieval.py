@@ -124,7 +124,16 @@ def _parse_value_funcs(body: Union[RetrieveRequest, ReasonRequest]):
     return tag_relevant, semantic_relevant, procedural_relevant, subgoal_relevant, semantic_relevant4episodic
 
 
-@router.post("/{graph_id}/retrieve", response_model=RetrieveResponse)
+@router.post(
+    "/{graph_id}/retrieve",
+    response_model=RetrieveResponse,
+    summary="语义检索通道（embedding 向量召回，记忆读取唯一语义入口）",
+    description=(
+        "P1-6 接口语义消歧：本端点执行真实语义检索（query embedding + 向量召回 + 多模式层融合）。"
+        "插件层 memory_search / OpenClaw 内置记忆检索的语义路径必须且只能路由到这里。"
+        "GET /search 是关键词/列举通道，不是语义入口，两者不可混用。"
+    ),
+)
 def retrieve(graph_id: str, body: RetrieveRequest) -> RetrieveResponse:
     graph = _get_graph(graph_id)
 

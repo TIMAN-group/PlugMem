@@ -8,7 +8,14 @@ from __future__ import annotations
 import heapq
 import json
 import logging
+import math
+import os
 import random
+import re
+import threading
+import time
+import concurrent.futures
+from collections import Counter, OrderedDict
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import numpy as np
@@ -89,6 +96,119 @@ def _passes_metadata_filter(
     return True
 
 
+# ----------------------------------------------------------------------
+# BM25 keyword channel (hybrid retrieval — ZeroClaw-inspired, pure Python)
+# ----------------------------------------------------------------------
+_BM25_K1 = 1.5
+_BM25_B = 0.75
+_BM25_VECTOR_WEIGHT = 0.7
+_BM25_KEYWORD_WEIGHT = 0.3
+_ASCII_TOKEN_RE = re.compile(r"[a-z0-9_]+")
+_CJK_RUN_RE = re.compile(r"[\u4e00-\u9fff]+")
+
+
+def _tokenize_mixed(text: str) -> List[str]:
+    """ASCII word tokens + CJK unigrams/bigrams (no external deps)."""
+    if not text:
+        return []
+    lowered = text.lower()
+    tokens: List[str] = _ASCII_TOKEN_RE.findall(lowered)
+    for run in _CJK_RUN_RE.findall(lowered):
+        tokens.extend(run)
+        tokens.extend(run[i:i + 2] for i in range(len(run) - 1))
+    return tokens
+
+
+class _BM25Index:
+    """Inverted index over active semantic nodes; rebuilt on node-set change."""
+
+    __slots__ = ("version", "doc_len", "avgdl", "postings", "n_docs")
+
+    def __init__(self, version: Tuple[int, int], nodes: List[SemanticNode]):
+        self.version = version
+        postings: Dict[str, List[Tuple[int, int]]] = {}
+        self.doc_len: Dict[int, int] = {}
+        total_len = 0
+        for node in nodes:
+            toks = _tokenize_mixed(node.get_semantic_memory())
+            self.doc_len[node.semantic_id] = max(1, len(toks))
+            total_len += len(toks)
+            for tok, tf in Counter(toks).items():
+                postings.setdefault(tok, []).append((node.semantic_id, tf))
+        self.postings = postings
+        self.n_docs = max(1, len(nodes))
+        self.avgdl = max(1.0, total_len / self.n_docs)
+
+    def score(self, query_tokens: List[str], active_ids: set) -> Dict[int, float]:
+        if not query_tokens:
+            return {}
+        scores: Dict[int, float] = {}
+        for tok, _qf in Counter(query_tokens).items():
+            posts = self.postings.get(tok)
+            if not posts:
+                continue
+            df = len(posts)
+            idf = math.log(1.0 + (self.n_docs - df + 0.5) / (df + 0.5))
+            for sid, tf in posts:
+                if sid not in active_ids:
+                    continue
+                dl = self.doc_len.get(sid, 1)
+                denom = tf + _BM25_K1 * (1.0 - _BM25_B + _BM25_B * dl / self.avgdl)
+                scores[sid] = scores.get(sid, 0.0) + idf * (tf * (_BM25_K1 + 1.0)) / denom
+        return scores
+
+
+def _bm25_normalize(scores: Dict[int, float]) -> Dict[int, float]:
+    if not scores:
+        return {}
+    hi = max(scores.values())
+    if hi <= 0:
+        return {k: 0.0 for k in scores}
+    return {k: v / hi for k, v in scores.items()}
+
+
+# ----------------------------------------------------------------------
+# Plan cache — skip repeated LLM planning for identical observations
+# ----------------------------------------------------------------------
+_PLAN_CACHE_TTL = 3600.0
+_PLAN_CACHE_MAX = 512
+_plan_cache: "OrderedDict[str, tuple]" = OrderedDict()
+_plan_cache_lock = threading.Lock()
+
+
+def _plan_cache_key(observation: str, task_type: str) -> str:
+    norm = "".join(ch for ch in (observation or "").lower() if ch.isalnum())
+    return f"{task_type or ''}::{norm}"
+
+
+def _plan_cache_get(key: str):
+    with _plan_cache_lock:
+        item = _plan_cache.get(key)
+        if item is None:
+            return None
+        ts, val = item
+        if time.time() - ts > _PLAN_CACHE_TTL:
+            _plan_cache.pop(key, None)
+            return None
+        _plan_cache.move_to_end(key)
+        return val
+
+
+def _plan_cache_put(key: str, val) -> None:
+    with _plan_cache_lock:
+        _plan_cache[key] = (time.time(), val)
+        _plan_cache.move_to_end(key)
+        while len(_plan_cache) > _PLAN_CACHE_MAX:
+            _plan_cache.popitem(last=False)
+
+
+def _plan_cache_evict(observation: str, task_type: str) -> None:
+    """Drop a cached plan (used when the plan led to an empty recall)."""
+    key = _plan_cache_key(observation, task_type)
+    with _plan_cache_lock:
+        _plan_cache.pop(key, None)
+
+
 class MemoryGraph:
     """Unified memory graph with ChromaDB-backed persistence."""
 
@@ -148,6 +268,18 @@ class MemoryGraph:
         # Time counters
         self.semantic_time = 0
         self.procedural_time = 0
+
+        # P1-4 (2026-08-06): content revision counter — bumped whenever node
+        # content is rewritten (merge / PATCH).  Included in the BM25 index
+        # version so a content rewrite invalidates the cached index.
+        self._content_rev = 0
+        # P0-2B (2026-08-29): vectorized semantic matrix cache.  A dedicated
+        # revision is bumped on active-set / embedding mutations so the next
+        # retrieve rebuilds the matrix instead of reading stale rows.
+        self._semantic_embedding_cache_rev = 0
+        self._semantic_matrix_cache: Optional[np.ndarray] = None
+        self._semantic_matrix_ids: List[int] = []
+        self._semantic_matrix_version: Optional[Tuple[int, int, int, int]] = None
 
         # Lookup dicts
         self.tag2node: Dict[str, TagNode] = {}
@@ -231,6 +363,11 @@ class MemoryGraph:
                 credibility=meta.get("credibility", 10),
                 source=meta.get("source"),
                 confidence=float(meta.get("confidence", 0.5)),
+                created_at=meta.get("created_at"),
+                updated_at=meta.get("updated_at"),
+                last_access=meta.get("last_access", 0.0),
+                event_time=meta.get("event_time") or None,
+                event_time_precision=meta.get("event_time_precision") or None,
             )
             node.tags = _deserialize_list(meta.get("tags", "[]"))
             node._temp_episodic_ids = _deserialize_list(meta.get("episodic_ids", "[]"))
@@ -297,6 +434,67 @@ class MemoryGraph:
         self.subgoal_id2node = {n.subgoal_id: n for n in self.subgoal_nodes}
         self.subgoal2node = {n.subgoal: n for n in self.subgoal_nodes}
         self.procedural_id2node = {n.procedural_id: n for n in self.procedural_nodes}
+        # P0-2B: the semantic list identity changed, so drop any cached matrix.
+        self._invalidate_semantic_embedding_cache()
+
+    def _invalidate_semantic_embedding_cache(self) -> None:
+        """Drop the P0-2B vectorized semantic matrix cache."""
+        self._semantic_embedding_cache_rev += 1
+        self._semantic_matrix_cache = None
+        self._semantic_matrix_ids = []
+        self._semantic_matrix_version = None
+
+    def _semantic_embedding_cache_key(self) -> Tuple[int, int, int, int]:
+        nodes = self.semantic_nodes
+        return (
+            len(nodes),
+            nodes[-1].semantic_id if nodes else -1,
+            self._content_rev,
+            self._semantic_embedding_cache_rev,
+        )
+
+    def _get_semantic_matrix(self) -> Tuple[np.ndarray, List[int]]:
+        """Build/cache a row-normalized float32 matrix of active semantic embeddings.
+
+        P0-2B: one matrix multiply replaces the legacy O(N) Python cosine loop.
+        Missing embeddings are filled lazily like the legacy loop; zero-length
+        vectors are omitted and therefore score 0.0, matching get_similarity.
+        """
+        version = self._semantic_embedding_cache_key()
+        if (
+            self._semantic_matrix_cache is not None
+            and self._semantic_matrix_version == version
+        ):
+            return self._semantic_matrix_cache, self._semantic_matrix_ids
+
+        ids: List[int] = []
+        vectors: List[np.ndarray] = []
+        for node in self.semantic_nodes:
+            if not node.is_active:
+                continue
+            emb = node.embedding
+            if emb is None:
+                # P0-2B: preserve the legacy lazy-embedding behavior.
+                emb = self.embedder.embed(node.get_semantic_memory())
+                node.embedding = emb
+            vec = np.asarray(emb, dtype=np.float32).ravel()
+            if vec.size == 0:
+                continue
+            vectors.append(vec)
+            ids.append(node.semantic_id)
+
+        if vectors:
+            matrix = np.vstack(vectors).astype(np.float32, copy=False)
+            norms = np.linalg.norm(matrix, axis=1, keepdims=True)
+            norms[norms == 0] = 1.0
+            matrix = matrix / norms
+        else:
+            matrix = np.empty((0, 0), dtype=np.float32)
+
+        self._semantic_matrix_cache = matrix
+        self._semantic_matrix_ids = ids
+        self._semantic_matrix_version = version
+        return matrix, ids
 
     def _link_nodes(self) -> None:
         """Re-establish in-memory cross-references between nodes using stored IDs."""
@@ -361,7 +559,12 @@ class MemoryGraph:
     # ------------------------------------------------------------------ #
 
     def insert(self, memory: Memory) -> None:
-        """Insert structured memory into the graph and persist to ChromaDB."""
+        """Insert structured memory into the graph and persist to ChromaDB.
+
+        P0-3 (2026-08-06): Skip near-duplicate semantic nodes (tag-overlap +
+        semantic_equal check).  P0-5: catch storage-write exceptions and roll
+        back the corresponding in-memory append so the graph stays consistent.
+        """
         normalize_memory(memory)
 
         # session_id stamps every node created by this insert. Used by the
@@ -418,7 +621,7 @@ class MemoryGraph:
             if not sem_str:
                 continue
 
-            sem_id = len(self.semantic_nodes)
+            sem_id = max(self.semantic_id2node.keys(), default=-1) + 1  # P0-5: 单调递增，避免回滚后空洞撞 id
             sem_node = SemanticNode(
                 semantic_id=sem_id,
                 semantic_memory_str=sem_str,
@@ -427,6 +630,9 @@ class MemoryGraph:
                 source=sem_item.get("source"),
                 confidence=float(sem_item.get("confidence", 0.5)),
                 session_id=sid,
+                # P0 双时钟（08-12）：事实所指时间透传
+                event_time=sem_item.get("event_time") or None,
+                event_time_precision=sem_item.get("event_time_precision") or None,
             )
 
             # Link episodic nodes
@@ -469,7 +675,38 @@ class MemoryGraph:
                     tag_node.semantic_nodes.append(sem_node)
 
             sem_node.tags = list(set(sem_node.tags))
+            # P0-3 去重：跳过与现有活跃节点高度相似的重复插入
+            # ⚠️ 守卫必须用 `is not None`：embedding 是 property，返回 np.ndarray，
+            #     bool(ndarray) 抛 ValueError（Qwen3.8 二次审查 08-06 实锤）
+            _skip_dup = False
+            if getattr(self, 'semantic_equal', None) is not None and sem_node.embedding is not None and sem_node.tags:
+                for tag_str in sem_node.tags[:3]:
+                    tn = self.tag2node.get(tag_str)
+                    if tn is None:
+                        continue
+                    for existing in tn.semantic_nodes[-5:]:
+                        if existing is sem_node or not getattr(existing, 'is_active', True):
+                            continue
+                        try:
+                            rel = get_similarity(sem_node.embedding, existing.embedding)
+                            if self.semantic_equal.evaluate(Relevance=rel) > 0.92:
+                                _skip_dup = True
+                                break
+                        except Exception:
+                            pass
+                    if _skip_dup:
+                        break
+            if _skip_dup:
+                # 清理已挂到 tag 的悬空引用，避免 tag 列表积累垃圾
+                for tn in sem_node.tag_nodes:
+                    try:
+                        tn.semantic_nodes.remove(sem_node)
+                    except ValueError:
+                        pass
+                logger.debug("Skipping duplicate semantic node: %s", sem_str[:60])
+                continue
             self.semantic_nodes.append(sem_node)
+            self._invalidate_semantic_embedding_cache()  # P0-2B: new row
             self.semantic_id2node[sem_id] = sem_node
             curr_sem_nodes.append(sem_node)
             self.semantic_time += 1
@@ -483,20 +720,41 @@ class MemoryGraph:
             if isinstance(embedding_list, np.ndarray):
                 embedding_list = embedding_list.tolist()
 
-            self.storage.add_semantic(
-                self.graph_id,
-                semantic_id=sem_node.semantic_id,
-                text=sem_node.semantic_memory_str,
-                embedding=embedding_list,
-                tags=sem_node.tags,
-                tag_ids=[t.tag_id for t in sem_node.tag_nodes],
-                time=sem_node.time,
-                session_id=sid,
-                episodic_ids=[e.episodic_id for e in sem_node.episodic_nodes],
-                bro_semantic_ids=bro_ids,
-                source=sem_node.source,
-                confidence=sem_node.confidence,
-            )
+            try:
+                self.storage.add_semantic(
+                    self.graph_id,
+                    semantic_id=sem_node.semantic_id,
+                    text=sem_node.semantic_memory_str,
+                    embedding=embedding_list,
+                    tags=sem_node.tags,
+                    tag_ids=[t.tag_id for t in sem_node.tag_nodes],
+                    time=sem_node.time,
+                    session_id=sid,
+                    episodic_ids=[e.episodic_id for e in sem_node.episodic_nodes],
+                    bro_semantic_ids=bro_ids,
+                    source=sem_node.source,
+                    confidence=sem_node.confidence,
+                    # P0 双时钟（08-12）：事实所指时间透传到 chroma
+                    event_time=sem_node.event_time,
+                    event_time_precision=sem_node.event_time_precision,
+                )
+            except Exception:
+                # P0-5 回滚：存储写入失败时清理内存状态
+                logger.exception("add_semantic failed for %s, rolling back", sem_node.semantic_id)
+                try:
+                    if sem_node in self.semantic_nodes:
+                        self.semantic_nodes.remove(sem_node)
+                        self._invalidate_semantic_embedding_cache()  # P0-2B: rolled-back row
+                except Exception:
+                    pass
+                self.semantic_id2node.pop(sem_node.semantic_id, None)
+                # 从 tag 节点移除引用
+                for tn in sem_node.tag_nodes:
+                    try:
+                        tn.semantic_nodes.remove(sem_node)
+                    except Exception:
+                        pass
+                raise
 
         # 3. Procedural + subgoal nodes
         for proc_item, proc_emb_item in zip(
@@ -590,6 +848,7 @@ class MemoryGraph:
             self.procedural_time += 1
 
         self._rebuild_lookups()
+        self._content_rev += 1  # P1-4: new content → invalidate BM25 cache
         logger.info("Inserted memory into graph %s", self.graph_id)
 
     # ------------------------------------------------------------------ #
@@ -660,6 +919,71 @@ class MemoryGraph:
 
         return result
 
+    _CORRECTION_MARKERS = (
+        "纠正", "更正", "误诊", "修正", "此前误判", "实际根因",
+        "实际有效", "非失效", "复测",
+    )
+
+    def _get_bm25_index(self) -> _BM25Index:
+        nodes = self.semantic_nodes
+        # P1-4: include content revision so merge/PATCH rewrites invalidate the
+        # cached index even when node count / last id are unchanged.
+        version = (len(nodes), nodes[-1].semantic_id if nodes else -1, self._content_rev)
+        idx = getattr(self, "_bm25_index", None)
+        if idx is None or idx.version != version:
+            idx = _BM25Index(version, [n for n in nodes if n.is_active])
+            self._bm25_index = idx
+        return idx
+
+    def _suppress_superseded(
+        self,
+        nodes: List[SemanticNode],
+        _trace: Optional[Dict[str, Any]] = None,
+    ) -> List[SemanticNode]:
+        """Knowledge-update suppression within a selected set.
+
+        Two rules (conservative, trace-auditable):
+        1. correction — if exactly one of a similar pair carries an explicit
+           correction marker (纠正/误诊/...), the corrected older fact is dropped.
+        2. near-duplicate — pairs with similarity >= 0.86 collapse to the newer.
+        """
+        if len(nodes) < 2:
+            return nodes
+        for n in nodes:
+            if n.embedding is None:
+                n.embedding = self.embedder.embed(n.get_semantic_memory())
+        drop: set = set()
+        suppressed: List[Dict[str, Any]] = []
+        for i in range(len(nodes)):
+            for j in range(i + 1, len(nodes)):
+                a, b = nodes[i], nodes[j]
+                if a.semantic_id in drop or b.semantic_id in drop:
+                    continue
+                sim = float(get_similarity(a.embedding, b.embedding))
+                a_corr = any(m in (a.get_semantic_memory() or "") for m in self._CORRECTION_MARKERS)
+                b_corr = any(m in (b.get_semantic_memory() or "") for m in self._CORRECTION_MARKERS)
+                if a_corr != b_corr and sim >= 0.72:
+                    loser = b if a_corr else a
+                    winner = a if a_corr else b
+                    drop.add(loser.semantic_id)
+                    suppressed.append({
+                        "dropped": loser.semantic_id, "kept": winner.semantic_id,
+                        "sim": sim, "rule": "correction",
+                    })
+                elif sim >= 0.86:
+                    loser, winner = (a, b) if b.time >= a.time else (b, a)
+                    drop.add(loser.semantic_id)
+                    suppressed.append({
+                        "dropped": loser.semantic_id, "kept": winner.semantic_id,
+                        "sim": sim, "rule": "near-duplicate",
+                    })
+        if not drop:
+            return nodes
+        if _trace is not None:
+            _trace["superseded"] = suppressed
+        kept = [n for n in nodes if n.semantic_id not in drop]
+        return kept or nodes[:1]
+
     def retrieve_semantic_nodes(
         self,
         semantic_memory: Dict[str, Any],
@@ -682,21 +1006,80 @@ class MemoryGraph:
         query_embedding = semantic_memory_embedding["semantic_memory"]
         query_tags: List[str] = semantic_memory.get("tags", [])
 
-        # Phase 1: direct embedding similarity top-5
+        # Phase 1: hybrid candidate selection (vector similarity + BM25 keywords)
         sem_node_topk = 5
+        bm25_index = self._get_bm25_index()
+        query_tokens = _tokenize_mixed(semantic_memory["semantic_memory"])
         sim_list = []
-        for node in self.semantic_nodes:
-            if not node.is_active:
-                continue
-            if not _passes_metadata_filter(node, min_confidence, source_in):
-                continue
-            if node.embedding is None:
-                node.embedding = self.embedder.embed(node.get_semantic_memory())
-            sim = get_similarity(query_embedding, node.embedding)
-            sim_list.append((sim, node.semantic_id))
+        active_ids = set()
+        if os.getenv("PLUGMEM_P0_2B_DISABLE") == "1":
+            # P0-2B: benchmark-only fallback to the legacy O(N) loop.
+            for node in self.semantic_nodes:
+                if not node.is_active:
+                    continue
+                if not _passes_metadata_filter(node, min_confidence, source_in):
+                    continue
+                if node.embedding is None:
+                    node.embedding = self.embedder.embed(node.get_semantic_memory())
+                sim = get_similarity(query_embedding, node.embedding)
+                sim_list.append((sim, node.semantic_id))
+                active_ids.add(node.semantic_id)
+        else:
+            matrix, matrix_ids = self._get_semantic_matrix()
+            query_vec = np.asarray(query_embedding, dtype=np.float32).ravel()
+            if matrix.size == 0 or query_vec.size == 0:
+                sim_by_sid = {}
+            else:
+                query_norm = np.linalg.norm(query_vec)
+                if query_norm == 0:
+                    sim_by_sid = {sid: 0.0 for sid in matrix_ids}
+                else:
+                    scores = matrix @ (query_vec / query_norm)
+                    sim_by_sid = dict(zip(matrix_ids, scores.tolist()))
+            for node in self.semantic_nodes:
+                if not node.is_active:
+                    continue
+                if not _passes_metadata_filter(node, min_confidence, source_in):
+                    continue
+                # P0-2B: preserve legacy loop ordering and filter semantics.
+                sim = sim_by_sid.get(node.semantic_id, 0.0)
+                sim_list.append((sim, node.semantic_id))
+                active_ids.add(node.semantic_id)
 
-        sim_list.sort(reverse=True, key=lambda x: x[0])
-        top_sim_nodes = [self.semantic_id2node[sid] for _, sid in sim_list[:sem_node_topk] if sid in self.semantic_id2node]
+        bm25_raw = bm25_index.score(query_tokens, active_ids)
+        bm25_norm = _bm25_normalize(bm25_raw)
+        if sim_list:
+            lo = min(s for s, _ in sim_list)
+            hi = max(s for s, _ in sim_list)
+            rng = (hi - lo) or 1.0
+            # P0-2B: vectorize hybrid scoring and select topk candidates with
+            # np.argpartition instead of a full Python sort.  Weights and the
+            # hybrid ranking formula are unchanged from the legacy hybrid_list.
+            sims = np.asarray([s for s, _ in sim_list], dtype=np.float64)
+            sids = [sid for _, sid in sim_list]
+            bm25 = np.asarray(
+                [bm25_norm.get(sid, 0.0) for sid in sids], dtype=np.float64,
+            )
+            hybrid = (
+                _BM25_VECTOR_WEIGHT * ((sims - lo) / rng)
+                + _BM25_KEYWORD_WEIGHT * bm25
+            )
+            topk = min(sem_node_topk, len(hybrid))
+            top_indices = np.argpartition(-hybrid, kth=topk - 1)[:topk]
+            # Restore descending hybrid order to mirror legacy stable sort.
+            top_indices = top_indices[np.argsort(-hybrid[top_indices], kind="stable")]
+            selected_sids = [sids[i] for i in top_indices]
+        else:
+            selected_sids = []
+        # keyword-only channel: exact-token matches that vector ranking misses
+        for sid, _bs in sorted(bm25_raw.items(), key=lambda kv: -kv[1])[:3]:
+            if sid not in selected_sids and sid in self.semantic_id2node:
+                selected_sids.append(sid)
+        top_sim_nodes = [
+            self.semantic_id2node[sid]
+            for sid in selected_sids
+            if sid in self.semantic_id2node
+        ]
 
         if _trace is not None:
             _trace["semantic_topk_by_similarity"] = [
@@ -759,7 +1142,10 @@ class MemoryGraph:
         for sem_node in candidate_nodes:
             if sem_node.embedding is None:
                 sem_node.embedding = self.embedder.embed(sem_node.get_semantic_memory())
-            relevance = get_similarity(query_embedding, sem_node.embedding)
+            sim = get_similarity(query_embedding, sem_node.embedding)
+            # max-fusion: a strong exact-token match is a strong relevance
+            # signal on its own (linear blending let vector junk outrank it)
+            relevance = max(sim, 0.85 * bm25_norm.get(sem_node.semantic_id, 0.0))
             num_tags = max(1, len(sem_node.tags))
             importance_score = tag_vote.get(sem_node.semantic_id, {}).get("importance", 0.0) / num_tags
             tag_votes_cnt = int(tag_vote.get(sem_node.semantic_id, {}).get("cnt", 0))
@@ -804,6 +1190,7 @@ class MemoryGraph:
             _trace["k"] = int(value_func.k)
             _trace["value_threshold"] = float(value_func.value_threshold)
 
+        result = self._suppress_superseded(result, _trace)
         return result
 
     def retrieve_semantic_nodes_wo_tag(
@@ -1137,33 +1524,62 @@ class MemoryGraph:
         sensible no-LLM fallbacks are used so the demo works without any
         LLM service configured.
         """
-        # 1. Plan / mode resolution
+        # 1. Plan / mode resolution (parallel LLM calls + plan cache)
         plan_source: Dict[str, str] = {}
-        if mode is None:
-            if auto_plan:
-                mode = get_mode(
-                    self.retrieval_llm, observation=observation,
-                    task_type=task_type, prompts=self.prompts, graph_id=self.graph_id,
-                )
-                plan_source["mode"] = "llm"
+        need_llm = auto_plan and (mode is None or query_tags is None or next_subgoal is None)
+        if need_llm:
+            ck = _plan_cache_key(observation or "", task_type or "")
+            cached = _plan_cache_get(ck)
+            if cached is not None:
+                c_mode, c_subgoal, c_tags = cached
+                if mode is None and c_mode is not None:
+                    mode = c_mode
+                    plan_source["mode"] = "cache"
+                if next_subgoal is None and c_subgoal is not None:
+                    next_subgoal = c_subgoal
+                    plan_source["next_subgoal"] = "cache"
+                if query_tags is None and c_tags:
+                    query_tags = list(c_tags)
+                    plan_source["query_tags"] = "cache"
             else:
-                mode = "semantic_memory"
-                plan_source["mode"] = "default"
-        else:
+                with concurrent.futures.ThreadPoolExecutor(max_workers=2) as _ex:
+                    fut_mode = None
+                    if mode is None:
+                        fut_mode = _ex.submit(
+                            get_mode, self.retrieval_llm, observation=observation,
+                            task_type=task_type, prompts=self.prompts, graph_id=self.graph_id,
+                        )
+                    fut_plan = None
+                    if query_tags is None or next_subgoal is None:
+                        fut_plan = _ex.submit(
+                            get_plan, self.retrieval_llm, goal=goal, subgoal=subgoal,
+                            state=state, observation=observation, prompts=self.prompts,
+                            graph_id=self.graph_id,
+                        )
+                    try:
+                        llm_mode = fut_mode.result() if fut_mode is not None else None
+                    except Exception:
+                        llm_mode = None
+                    try:
+                        llm_subgoal, llm_tags = fut_plan.result() if fut_plan is not None else (None, None)
+                    except Exception:
+                        llm_subgoal, llm_tags = (None, None)
+                if llm_mode is not None:
+                    mode = llm_mode
+                    plan_source["mode"] = "llm"
+                if next_subgoal is None and llm_subgoal is not None:
+                    next_subgoal = llm_subgoal
+                    plan_source["next_subgoal"] = "llm"
+                if query_tags is None and llm_tags is not None:
+                    query_tags = llm_tags
+                    plan_source["query_tags"] = "llm"
+                _plan_cache_put(ck, (llm_mode, llm_subgoal, list(llm_tags) if llm_tags else []))
+        if mode is None:
+            mode = "semantic_memory"
+            plan_source.setdefault("mode", "default")
+        elif "mode" not in plan_source:
             plan_source["mode"] = "override"
         mode = _normalize_mode(mode)
-
-        if (query_tags is None or next_subgoal is None) and auto_plan:
-            llm_subgoal, llm_tags = get_plan(
-                self.retrieval_llm, goal=goal, subgoal=subgoal, state=state,
-                observation=observation, prompts=self.prompts, graph_id=self.graph_id,
-            )
-            if next_subgoal is None:
-                next_subgoal = llm_subgoal
-                plan_source["next_subgoal"] = "llm"
-            if query_tags is None:
-                query_tags = llm_tags
-                plan_source["query_tags"] = "llm"
 
         if next_subgoal is None:
             next_subgoal = subgoal or observation or ""
@@ -1314,8 +1730,13 @@ class MemoryGraph:
             embedding=embedding,
             time=self.semantic_time,
             son=[sem1, sem2],
+            # P2 时态字段：合并即更新（08-06）
+            created_at=max(sem1.created_at or 0, sem2.created_at or 0) or None,
+            updated_at=self.semantic_time,
         )
         self.semantic_nodes.append(merged_node)
+        self._invalidate_semantic_embedding_cache()  # P0-2B: merged row
+        self._content_rev += 1  # P1-4: content rewrite → invalidate BM25 cache
 
         # Combine episodic and tag links
         epis_ids = set()
@@ -1370,10 +1791,10 @@ class MemoryGraph:
 
         time_st = self.semantic_time
 
-        # Credibility decay
+        # Credibility decay（P0-1 护栏：pinned 节点不衰减）
         if credibility_decay != 0:
             for sn in self.semantic_nodes:
-                if sn.time < time_st and sn.is_active:
+                if sn.time < time_st and sn.is_active and not getattr(sn, "pinned", False):
                     sn.Credibility -= credibility_decay
 
         # Determine scope
@@ -1394,11 +1815,17 @@ class MemoryGraph:
                 continue
 
             if sem_node.Credibility < min_credibility_to_keep_active:
+                # P0-1 护栏：pinned 节点不 soft-deactivate（业务源节点保护）
+                if getattr(sem_node, "pinned", False):
+                    stats["skipped_inactive"] += 1
+                    continue
                 sem_node.is_active = False
                 self.storage.update_semantic(
                     self.graph_id, sem_node.semantic_id,
                     metadata_updates={"is_active": False},
                 )
+                self._invalidate_semantic_embedding_cache()  # P0-2B: active-set change
+                self._content_rev += 1  # P1-4: 活跃集变化 → 失效 BM25 索引
                 stats["soft_deactivated"] += 1
                 continue
 
@@ -1419,6 +1846,10 @@ class MemoryGraph:
                 if cand is None or not cand.is_active or cand.time >= time_st or cand.updated:
                     continue
                 if cand.semantic_id <= sem_node.semantic_id:
+                    continue
+                # P1-5 二次审查补丁：任一侧 pinned 不参与 merge，避免
+                # “原节点 + 合并节点同时活跃、内容重复、recall 双份返回”
+                if getattr(sem_node, "pinned", False) or getattr(cand, "pinned", False):
                     continue
                 filtered.append(cid)
 
@@ -1448,14 +1879,16 @@ class MemoryGraph:
                         continue
 
                 new_node, del_1, del_2 = self.merge_semantic(sem_node.semantic_id, cid)
-                if del_1:
+                if del_1 and not getattr(sem_node, "pinned", False):
                     sem_node.is_active = False
+                    self._invalidate_semantic_embedding_cache()  # P0-2B: active-set change
                     self.storage.update_semantic(
                         self.graph_id, sem_node.semantic_id,
                         metadata_updates={"is_active": False},
                     )
-                if del_2:
+                if del_2 and not getattr(cand, "pinned", False):
                     cand.is_active = False
+                    self._invalidate_semantic_embedding_cache()  # P0-2B: active-set change
                     self.storage.update_semantic(
                         self.graph_id, cid,
                         metadata_updates={"is_active": False},
