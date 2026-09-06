@@ -215,3 +215,11 @@ data/
 
 # Local working notes (not for the repo)
 CLAUDE.md
+
+# Runtime data (never commit)
+logs/
+data/
+data.bak.*
+*.bak.*
+*.sqlite3
+*.sqlite3-journal
